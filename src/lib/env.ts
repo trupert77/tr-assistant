@@ -1,0 +1,40 @@
+import { z } from "zod";
+
+/**
+ * Public env vars are inlined at build time, so they must be read as literal
+ * `process.env.NEXT_PUBLIC_*` expressions. They are safe in the browser.
+ */
+export const publicEnv = {
+  supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+  supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+  appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+};
+
+const serverSchema = z.object({
+  NEXT_PUBLIC_SUPABASE_URL: z.url(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+  NEXT_PUBLIC_APP_URL: z.url(),
+  ALLOWED_EMAIL: z.email(),
+  APP_TIMEZONE: z.string().min(1).default("America/Detroit"),
+});
+
+export type ServerEnv = z.infer<typeof serverSchema>;
+
+let cached: ServerEnv | undefined;
+
+/**
+ * Server-only. Validated lazily so importing this module never fails at
+ * build time; a missing variable fails on first use with a clear message.
+ */
+export function getServerEnv(): ServerEnv {
+  if (cached) return cached;
+  const parsed = serverSchema.safeParse(process.env);
+  if (!parsed.success) {
+    const missing = parsed.error.issues
+      .map((issue) => issue.path.join("."))
+      .join(", ");
+    throw new Error(`Invalid or missing environment variables: ${missing}`);
+  }
+  cached = parsed.data;
+  return cached;
+}
