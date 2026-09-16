@@ -1,13 +1,16 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState } from "react";
 import { captureAction, type CaptureState } from "@/app/(app)/actions";
+import { CheckIcon, SendIcon } from "./icons";
 
 export function CaptureBar() {
   const [state, action, pending] = useActionState<CaptureState, FormData>(
     captureAction,
     {},
   );
+  const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   // The nonce of the last success whose "Saved" flash has already faded.
@@ -20,9 +23,14 @@ export function CaptureBar() {
     formRef.current?.reset();
     textRef.current?.focus();
     const nonce = state.nonce;
-    const t = setTimeout(() => setFadedNonce(nonce), 1500);
-    return () => clearTimeout(t);
-  }, [state.ok, state.nonce]);
+    const fade = setTimeout(() => setFadedNonce(nonce), 1800);
+    // Classification runs after the response; pull the result in when it lands.
+    const refreshes = [3000, 8000].map((ms) => setTimeout(() => router.refresh(), ms));
+    return () => {
+      clearTimeout(fade);
+      refreshes.forEach(clearTimeout);
+    };
+  }, [state.ok, state.nonce, router]);
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     // Enter sends; Shift+Enter adds a line.
@@ -33,11 +41,11 @@ export function CaptureBar() {
   }
 
   return (
-    <form ref={formRef} action={action} className="flex flex-col gap-2">
+    <form ref={formRef} action={action} className="flex flex-col gap-1.5">
       <label htmlFor="capture" className="sr-only">
         Capture
       </label>
-      <div className="flex items-end gap-2 rounded-2xl border border-zinc-300 bg-background p-2 focus-within:border-zinc-500 dark:border-zinc-700">
+      <div className="flex items-end gap-2 rounded-[28px] border border-line bg-surface p-2 pl-5 shadow-card transition-[border-color,box-shadow] focus-within:border-accent focus-within:shadow-glow">
         <textarea
           ref={textRef}
           id="capture"
@@ -49,24 +57,25 @@ export function CaptureBar() {
           enterKeyHint="send"
           placeholder="What's on your mind?"
           onKeyDown={onKeyDown}
-          className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-base outline-none placeholder:text-zinc-400"
+          className="max-h-40 flex-1 resize-none bg-transparent py-2 text-base leading-6 outline-none placeholder:text-faint"
         />
         <button
           type="submit"
           disabled={pending}
-          className="shrink-0 rounded-xl bg-foreground px-4 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-50"
+          aria-label="Save to inbox"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-accent to-accent-2 text-accent-foreground shadow-glow transition-[opacity,transform] hover:opacity-95 active:scale-95 disabled:opacity-50 disabled:shadow-none"
         >
-          {pending ? "…" : "Save"}
+          {saved ? <CheckIcon size={20} strokeWidth={2.4} /> : <SendIcon size={20} strokeWidth={2.4} />}
         </button>
       </div>
       <p
         role="status"
         aria-live="polite"
-        className={`min-h-5 px-2 text-xs ${
-          state.error ? "text-red-600 dark:text-red-400" : "text-zinc-500"
-        }`}
+        className={`min-h-4 px-5 text-xs transition-opacity ${
+          state.error ? "text-danger" : "text-muted"
+        } ${state.error || saved ? "opacity-100" : "opacity-0"}`}
       >
-        {state.error ?? (saved ? "Saved to inbox" : "")}
+        {state.error ?? (saved ? "Saved to inbox" : " ")}
       </p>
     </form>
   );

@@ -1,26 +1,119 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Design tokens. Dark-first, warm charcoal, orange accent, monospace.
+
+   Every color is written as light-dark(light, dark). Which side wins comes
+   from `color-scheme` on <html>: "light dark" follows the OS, and
+   data-theme="light" / "dark" (chosen in Settings, applied before first paint
+   by the inline script in app/layout.tsx) forces one side.
+
+   Use via Tailwind: bg-canvas, bg-surface, border-line, text-muted,
+   bg-accent, shadow-card, shadow-glow, from-accent to-accent-2 …
+--------------------------------------------------------------------------- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light dark;
+
+  --canvas: light-dark(#faf7f3, #131110);
+  --surface: light-dark(#ffffff, #1c1917);
+  --surface-2: light-dark(#f3eee8, #27221f);
+  --line: light-dark(#e8e1d9, #2f2926);
+  --line-strong: light-dark(#d3c9be, #463e39);
+  --foreground: light-dark(#1c1917, #f3ece5);
+  --muted: light-dark(#736a63, #a69c94);
+  --faint: light-dark(#a69c94, #6b625c);
+
+  --accent: light-dark(#ea580c, #fb923c);
+  --accent-2: light-dark(#f59e0b, #fbbf24);
+  --accent-soft: light-dark(#fff1e6, #33200f);
+  --accent-foreground: light-dark(#ffffff, #1a0e04);
+  --accent-glow: light-dark(rgb(234 88 12 / 0.22), rgb(251 146 60 / 0.28));
+  --ambient: light-dark(rgb(234 88 12 / 0.07), rgb(251 146 60 / 0.09));
+
+  --task: light-dark(#0284c7, #38bdf8);
+  --task-soft: light-dark(#e6f4fc, #0f2532);
+  --followup: light-dark(#7c3aed, #a78bfa);
+  --followup-soft: light-dark(#f1eafe, #251a3d);
+  --note: light-dark(#059669, #34d399);
+  --note-soft: light-dark(#e4f7ef, #0f2a22);
+
+  --danger: light-dark(#dc2626, #f87171);
+  --danger-soft: light-dark(#fee2e2, #3a1717);
+
+  --shadow-a: light-dark(rgb(28 25 23 / 0.04), rgb(0 0 0 / 0.45));
+  --shadow-b: light-dark(rgb(28 25 23 / 0.07), rgb(0 0 0 / 0.4));
+  --grid: light-dark(rgb(28 25 23 / 0.06), rgb(255 255 255 / 0.045));
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 @theme inline {
-  --color-background: var(--background);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-task: var(--task);
+  --color-task-soft: var(--task-soft);
+  --color-followup: var(--followup);
+  --color-followup-soft: var(--followup-soft);
+  --color-note: var(--note);
+  --color-note-soft: var(--note-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --shadow-card: 0 1px 2px var(--shadow-a), 0 8px 24px var(--shadow-b);
+  --shadow-float: 0 1px 0 var(--shadow-a), 0 12px 40px var(--shadow-b);
+  --shadow-glow: 0 0 0 1px var(--accent-glow), 0 0 22px var(--accent-glow);
+
+  /* Monospace everywhere: sans is an alias for the mono stack. */
+  --font-mono: var(--font-jetbrains), ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  --font-sans: var(--font-mono);
 }
 
 body {
-  background: var(--background);
+  background: var(--canvas);
   color: var(--foreground);
-  font-family: var(--font-sans), system-ui, sans-serif;
+  font-family: var(--font-sans);
+  font-feature-settings: "liga" 1, "calt" 1;
+  isolation: isolate;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Faint dot grid + grain + a warm glow bleeding in from the top. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(70% 45% at 50% -12%, var(--ambient), transparent 70%),
+    radial-gradient(var(--grid) 1px, transparent 1.2px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 100% 100%, 28px 28px, 200px 200px;
+  background-position: 0 0, 14px 14px, 0 0;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* Keep focus visible for keyboard users without a ring on every tap. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }

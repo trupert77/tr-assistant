@@ -1,78 +1,78 @@
 import { EmptyState } from "@/components/empty-state";
+import { CheckIcon, InboxIcon, SparklesIcon } from "@/components/icons";
+import { kindStyles, ui } from "@/components/ui";
+import { getAiProvider } from "@/lib/ai";
+import { formatDue } from "@/lib/dates";
 import { createSupabaseServerClient } from "@/lib/db/server";
-import type { ItemKind } from "@/lib/db/types";
+import type { InboxItemRow, ItemKind, ItemRow } from "@/lib/db/types";
 import { getServerEnv } from "@/lib/env";
 import { formatRelative } from "@/lib/format";
-import { promoteAction } from "../actions";
-
-const KIND_LABEL: Record<ItemKind, string> = {
-  task: "Task",
-  followup: "Follow-up",
-  note: "Note",
-};
+import { acceptAction, classifyAction, promoteAction } from "../actions";
 
 const KINDS: ItemKind[] = ["task", "followup", "note"];
+
+type Filed = Pick<ItemRow, "id" | "kind" | "title" | "created_at" | "due_at">;
 
 export default async function InboxPage() {
   const db = await createSupabaseServerClient();
   const timeZone = getServerEnv().APP_TIMEZONE;
+  const aiEnabled = getAiProvider() !== null;
 
-  const [{ data: pending }, { data: filed }] = await Promise.all([
+  const [{ data: open }, { data: filed }] = await Promise.all([
     db
       .from("inbox_items")
       .select()
-      .in("status", ["pending", "needs_review", "failed"])
+      .in("status", ["pending", "processing", "needs_review", "failed"])
       .order("created_at", { ascending: false }),
     db
       .from("items")
-      .select("id, kind, title, created_at")
+      .select("id, kind, title, created_at, due_at")
       .order("created_at", { ascending: false })
       .limit(10),
   ]);
 
+  // Items already created for needs_review rows, so we can show the AI's filing.
+  const reviewItemIds = (open ?? [])
+    .map((r) => r.item_id)
+    .filter((id): id is string => Boolean(id));
+  const { data: reviewItems } = reviewItemIds.length
+    ? await db
+        .from("items")
+        .select("id, kind, title, due_at, category, project_id")
+        .in("id", reviewItemIds)
+    : { data: [] as Pick<ItemRow, "id" | "kind" | "title" | "due_at" | "category" | "project_id">[] };
+  const itemById = new Map((reviewItems ?? []).map((i) => [i.id, i]));
+
+  const count = open?.length ?? 0;
+
   return (
     <div className="flex flex-col gap-8">
-      <section className="flex flex-col gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
-        {!pending?.length ? (
-          <EmptyState>Inbox is empty. Anything you capture shows up here.</EmptyState>
+      <section className="flex flex-col gap-4">
+        <div className="flex items-baseline justify-between">
+          <h1 className={ui.pageTitle}>Inbox</h1>
+          {count > 0 && (
+            <span className="rounded-full bg-accent-soft px-2.5 py-0.5 text-xs font-semibold text-accent">
+              {count} to review
+            </span>
+          )}
+        </div>
+
+        {count === 0 ? (
+          <EmptyState icon={<InboxIcon size={22} />} title="All clear">
+            {aiEnabled
+              ? "Captures are filed automatically. Anything the assistant wasn't sure about waits here."
+              : "Anything you capture shows up here until you file it."}
+          </EmptyState>
         ) : (
           <ul className="flex flex-col gap-3">
-            {pending.map((row) => (
-              <li
+            {open!.map((row) => (
+              <InboxCard
                 key={row.id}
-                className="flex flex-col gap-3 rounded-2xl border border-zinc-200 p-4 dark:border-zinc-800"
-              >
-                <p className="whitespace-pre-wrap break-words text-base">
-                  {row.raw_text}
-                </p>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs text-zinc-500">
-                    {formatRelative(row.created_at, timeZone)}
-                    {row.source !== "web" && ` · ${row.source}`}
-                    {row.status === "failed" && " · classification failed"}
-                  </span>
-                  <form action={promoteAction} className="flex gap-1.5">
-                    <input type="hidden" name="inboxItemId" value={row.id} />
-                    {KINDS.map((kind) => (
-                      <button
-                        key={kind}
-                        type="submit"
-                        name="kind"
-                        value={kind}
-                        className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
-                      >
-                        {KIND_LABEL[kind]}
-                      </button>
-                    ))}
-                  </form>
-                </div>
-                {row.ai_error && (
-                  <p className="text-xs text-red-600 dark:text-red-400">
-                    {row.ai_error}
-                  </p>
-                )}
-              </li>
+                row={row}
+                item={row.item_id ? itemById.get(row.item_id) : undefined}
+                timeZone={timeZone}
+                aiEnabled={aiEnabled}
+              />
             ))}
           </ul>
         )}
@@ -80,18 +80,19 @@ export default async function InboxPage() {
 
       {!!filed?.length && (
         <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-            Recently filed
-          </h2>
-          <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-            {filed.map((item) => (
-              <li key={item.id} className="flex items-center gap-3 py-2.5 text-sm">
-                <span className="w-20 shrink-0 text-xs uppercase tracking-wide text-zinc-500">
-                  {KIND_LABEL[item.kind]}
-                </span>
+          <h2 className={ui.sectionTitle}>Recently filed</h2>
+          <ul className={`${ui.card} divide-y divide-line`}>
+            {(filed as Filed[]).map((item) => (
+              <li key={item.id} className="flex items-center gap-3 px-5 py-3.5 text-sm">
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${kindStyles[item.kind].dot}`}
+                  aria-hidden
+                />
                 <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                <span className="shrink-0 text-xs text-zinc-500">
-                  {formatRelative(item.created_at, timeZone)}
+                <span className="shrink-0 text-xs text-faint">
+                  {item.due_at
+                    ? formatDue(item.due_at, timeZone)
+                    : `${kindStyles[item.kind].label} · ${formatRelative(item.created_at, timeZone)}`}
                 </span>
               </li>
             ))}
@@ -99,5 +100,107 @@ export default async function InboxPage() {
         </section>
       )}
     </div>
+  );
+}
+
+function InboxCard({
+  row,
+  item,
+  timeZone,
+  aiEnabled,
+}: {
+  row: InboxItemRow;
+  item?: Pick<ItemRow, "id" | "kind" | "title" | "due_at" | "category" | "project_id">;
+  timeZone: string;
+  aiEnabled: boolean;
+}) {
+  const meta = [
+    formatRelative(row.created_at, timeZone),
+    row.source !== "web" ? `via ${row.source}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <li className={`${ui.cardPad} flex flex-col gap-3`}>
+      <p className="whitespace-pre-wrap break-words text-[15px] leading-6">
+        {row.raw_text}
+      </p>
+
+      {row.status === "needs_review" && item && (
+        <div className="flex flex-col gap-1.5 rounded-2xl bg-surface-2 px-4 py-3 text-sm">
+          <div className="flex items-center gap-2">
+            <SparklesIcon size={15} className="shrink-0 text-accent" />
+            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${kindStyles[item.kind].chip}`}>
+              {kindStyles[item.kind].label}
+            </span>
+            <span className="min-w-0 flex-1 truncate font-medium">{item.title}</span>
+          </div>
+          <p className="text-xs text-muted">
+            {[
+              item.due_at ? formatDue(item.due_at, timeZone) : null,
+              item.category,
+              row.ai_confidence !== null
+                ? `${Math.round(row.ai_confidence * 100)}% sure`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "Not sure about this one"}
+          </p>
+        </div>
+      )}
+
+      {row.status === "failed" && row.ai_error && (
+        <p className="rounded-2xl bg-danger-soft px-4 py-2.5 text-xs text-danger">
+          Couldn&apos;t file automatically: {row.ai_error}
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-xs text-muted">
+          {row.status === "processing" ? "Filing…" : meta}
+        </span>
+
+        {row.status !== "processing" && (
+          <div className="flex flex-wrap gap-1.5">
+            {row.status === "needs_review" && (
+              <form action={acceptAction}>
+                <input type="hidden" name="inboxItemId" value={row.id} />
+                <button type="submit" className={`${ui.chip} bg-linear-to-r from-accent to-accent-2 text-accent-foreground shadow-glow`}>
+                  <CheckIcon size={14} strokeWidth={2.4} />
+                  Looks right
+                </button>
+              </form>
+            )}
+
+            {aiEnabled && (row.status === "pending" || row.status === "failed") && (
+              <form action={classifyAction}>
+                <input type="hidden" name="inboxItemId" value={row.id} />
+                <button type="submit" className={`${ui.chip} bg-accent-soft text-accent`}>
+                  <SparklesIcon size={14} />
+                  {row.status === "failed" ? "Retry" : "Auto-file"}
+                </button>
+              </form>
+            )}
+
+            <form action={promoteAction} className="flex gap-1.5">
+              <input type="hidden" name="inboxItemId" value={row.id} />
+              {KINDS.filter((k) => k !== item?.kind).map((kind) => (
+                <button
+                  key={kind}
+                  type="submit"
+                  name="kind"
+                  value={kind}
+                  className={`${ui.chip} ${kindStyles[kind].chip}`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${kindStyles[kind].dot}`} />
+                  {kindStyles[kind].label}
+                </button>
+              ))}
+            </form>
+          </div>
+        )}
+      </div>
+    </li>
   );
 }

@@ -21,6 +21,11 @@ const serverSchema = z.object({
   // never be exposed to the browser.
   CAPTURE_API_TOKEN: z.string().min(16).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  // AI classification. Without ANTHROPIC_API_KEY captures stay in the inbox
+  // for manual filing; nothing else breaks.
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  AI_PROVIDER: z.enum(["anthropic"]).default("anthropic"),
+  AI_MODEL: z.string().min(1).default("claude-opus-5"),
 });
 
 export type ServerEnv = z.infer<typeof serverSchema>;

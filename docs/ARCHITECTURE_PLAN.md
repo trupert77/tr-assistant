@@ -309,3 +309,17 @@ Written on 2026-09-16:
 - `src/lib/db/types.ts` is a hand-written `Database` type for the two tables in use; replace with `supabase gen types` output when convenient.
 
 Not in Phase 2 by design: editing or completing items (Phase 4), any AI (Phase 3).
+
+## 10. Phase 3 status
+
+Written on 2026-09-16:
+
+- `src/lib/ai/types.ts` defines the `AiProvider` interface and the zod `classificationSchema` (kind, title, body, priority, due date and time, workspace slug, project name, category, tags, people with roles, confidence, reasoning). Every field is nullable rather than optional because structured outputs need a closed schema.
+- `src/lib/ai/anthropic.ts` implements it with `claude-opus-5` via `client.beta.messages.parse` and `betaZodOutputFormat`, effort `low`, a cached static system prompt, and server-side refusal fallbacks (`fallbacks: "default"`). All per-request context (current date in Detroit time, workspaces, projects, known people, the text) goes in the user message so the system prompt cache holds.
+- `src/lib/ai/index.ts` returns the configured provider or null when `ANTHROPIC_API_KEY` is unset, in which case captures wait for manual filing.
+- `src/lib/capture/classify.ts` runs the pipeline: mark `processing`, classify, resolve workspace and project by name, convert the date with `zonedToIso`, call `promoteInboxItem` with the fields and people, then store the raw result and confidence. Confidence under 0.7 or an unlisted project name leaves the row `needs_review`; a thrown error leaves it `failed` with the message.
+- `promoteInboxItem` now updates an existing item in place, so re-filing after the AI picked the wrong kind changes the kind instead of duplicating. People are found by name or alias, created if new, and linked with `waiting_on` or `mentioned`.
+- `captureAction` classifies inside `after()` so the capture response returns immediately. The capture bar refreshes the page 3 and 8 seconds later to pull the result in.
+- Inbox shows, per row: the AI's proposed kind, title, due date, category and confidence with a "Looks right" button for review rows; a "Retry" button for failures; "Auto-file" for rows captured before the key was set; and the manual kind chips throughout.
+
+To turn it on: add `ANTHROPIC_API_KEY` to `.env.local` and Vercel. `AI_MODEL` and `AI_PROVIDER` have defaults.

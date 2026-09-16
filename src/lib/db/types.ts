@@ -14,6 +14,7 @@ export type InboxStatus =
   | "needs_review"
   | "failed";
 export type CaptureSource = "web" | "api" | "voice";
+export type PersonRole = "waiting_on" | "mentioned" | "owner";
 
 export type InboxItemRow = {
   id: string;
@@ -51,6 +52,44 @@ export type ItemRow = {
   updated_at: string;
 };
 
+export type WorkspaceRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  slug: string;
+  color: string | null;
+  sort_order: number;
+  created_at: string;
+};
+
+export type ProjectRow = {
+  id: string;
+  user_id: string;
+  workspace_id: string | null;
+  name: string;
+  description: string | null;
+  status: "active" | "archived";
+  created_at: string;
+  updated_at: string;
+};
+
+export type PersonRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  aliases: string[];
+  organization_id: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+export type ItemPersonRow = {
+  user_id: string;
+  item_id: string;
+  person_id: string;
+  role: PersonRole;
+};
+
 type Table<Row, Insert> = {
   Row: Row;
   Insert: Insert;
@@ -70,6 +109,25 @@ export type Database = {
         Partial<Omit<ItemRow, "kind" | "title">> & {
           kind: ItemKind;
           title: string;
+        }
+      >;
+      workspaces: Table<
+        WorkspaceRow,
+        Partial<Omit<WorkspaceRow, "name" | "slug">> & { name: string; slug: string }
+      >;
+      projects: Table<
+        ProjectRow,
+        Partial<Omit<ProjectRow, "name">> & { name: string }
+      >;
+      people: Table<
+        PersonRow,
+        Partial<Omit<PersonRow, "name">> & { name: string }
+      >;
+      item_people: Table<
+        ItemPersonRow,
+        Partial<Omit<ItemPersonRow, "item_id" | "person_id">> & {
+          item_id: string;
+          person_id: string;
         }
       >;
     };

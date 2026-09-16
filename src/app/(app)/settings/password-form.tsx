@@ -1,10 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
+import { ui } from "@/components/ui";
 import { setPassword, type SettingsState } from "./actions";
-
-const inputClass =
-  "w-full rounded-xl border border-zinc-300 bg-background px-4 py-3 text-base outline-none focus:border-zinc-500 dark:border-zinc-700";
 
 export function PasswordForm() {
   const [state, action, pending] = useActionState<SettingsState, FormData>(
@@ -25,7 +23,7 @@ export function PasswordForm() {
         required
         minLength={8}
         placeholder="New password"
-        className={inputClass}
+        className={ui.input}
       />
       <label htmlFor="confirm" className="sr-only">
         Confirm password
@@ -38,22 +36,18 @@ export function PasswordForm() {
         required
         minLength={8}
         placeholder="Confirm password"
-        className={inputClass}
+        className={ui.input}
       />
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-xl bg-foreground px-4 py-3 text-sm font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-50"
-      >
+      <button type="submit" disabled={pending} className={ui.btnPrimary}>
         {pending ? "Saving…" : "Save password"}
       </button>
       {state.error && (
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+        <p role="alert" className="text-sm text-danger">
           {state.error}
         </p>
       )}
       {state.message && (
-        <p role="status" className="text-sm text-zinc-600 dark:text-zinc-400">
+        <p role="status" className="text-sm text-muted">
           {state.message}
         </p>
       )}
