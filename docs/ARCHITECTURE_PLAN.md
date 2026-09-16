@@ -49,7 +49,7 @@ Next.js on Vercel
        ├─ db/        Supabase clients (server, browser)
        ├─ domain/    zod schemas + TS types for every object
        ├─ capture/   the capture pipeline (store raw → classify → create item)
-       ├─ ai/        provider interface + Anthropic implementation
+       ├─ ai/        provider interface + Anthropic and OpenAI implementations
        └─ retrieval/ queries behind Today, search, and the Assistant
         │
         ▼
@@ -238,8 +238,9 @@ Deliberately not added: a date-parsing library (the model gets the current date 
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | client + server | Public key; safe because RLS is on every table |
 | `SUPABASE_SERVICE_ROLE_KEY` | server only, **not in MVP** | Bypasses RLS. Only for future cron or worker jobs. |
 | `ANTHROPIC_API_KEY` | server only | Claude |
-| `AI_PROVIDER` | server | `anthropic` for now; the switch point for later |
-| `AI_MODEL` | server | `claude-opus-5` |
+| `OPENAI_API_KEY` | server only | ChatGPT (OpenAI) |
+| `AI_PROVIDER` | server | Fallback before a choice is saved in Settings: `anthropic` or `openai`; when unset, whichever key is present wins, Anthropic first |
+| `ANTHROPIC_MODEL`, `OPENAI_MODEL` | server | Optional per-provider overrides. Defaults: `claude-opus-5`, `gpt-5.5` |
 | `ALLOWED_EMAIL` | server | The one email allowed to sign in |
 | `APP_TIMEZONE` | server | `America/Detroit`, given to the classifier |
 | `CAPTURE_API_TOKEN` | server | Bearer token for `POST /api/capture` from Shortcuts |
@@ -316,10 +317,44 @@ Written on 2026-09-16:
 
 - `src/lib/ai/types.ts` defines the `AiProvider` interface and the zod `classificationSchema` (kind, title, body, priority, due date and time, workspace slug, project name, category, tags, people with roles, confidence, reasoning). Every field is nullable rather than optional because structured outputs need a closed schema.
 - `src/lib/ai/anthropic.ts` implements it with `claude-opus-5` via `client.beta.messages.parse` and `betaZodOutputFormat`, effort `low`, a cached static system prompt, and server-side refusal fallbacks (`fallbacks: "default"`). All per-request context (current date in Detroit time, workspaces, projects, known people, the text) goes in the user message so the system prompt cache holds.
-- `src/lib/ai/index.ts` returns the configured provider or null when `ANTHROPIC_API_KEY` is unset, in which case captures wait for manual filing.
+- `src/lib/ai/openai.ts` implements the same interface with `gpt-5.5` via `client.responses.parse` and `zodTextFormat`, reasoning effort `low`, and a fixed `prompt_cache_key`. Prompt text lives in `src/lib/ai/prompt.ts` so both providers share it. The schema sent to OpenAI drops string length limits (strict mode rejects them) and the result is re-validated against the full `classificationSchema`.
+- `src/lib/ai/index.ts` lists the providers, reports which have keys, and returns the one to use: the user's saved choice when its key is set, else `AI_PROVIDER`, else the first configured. Null when no key is set, in which case captures wait for manual filing.
+- `src/lib/ai/preference.ts` reads the saved choice from Supabase auth user metadata (`ai_provider`), with a session client or, for the capture API, the service-role admin lookup. Settings has a Claude / ChatGPT switch that writes it via `auth.updateUser`, so no table was needed.
 - `src/lib/capture/classify.ts` runs the pipeline: mark `processing`, classify, resolve workspace and project by name, convert the date with `zonedToIso`, call `promoteInboxItem` with the fields and people, then store the raw result and confidence. Confidence under 0.7 or an unlisted project name leaves the row `needs_review`; a thrown error leaves it `failed` with the message.
 - `promoteInboxItem` now updates an existing item in place, so re-filing after the AI picked the wrong kind changes the kind instead of duplicating. People are found by name or alias, created if new, and linked with `waiting_on` or `mentioned`.
 - `captureAction` classifies inside `after()` so the capture response returns immediately. The capture bar refreshes the page 3 and 8 seconds later to pull the result in.
 - Inbox shows, per row: the AI's proposed kind, title, due date, category and confidence with a "Looks right" button for review rows; a "Retry" button for failures; "Auto-file" for rows captured before the key was set; and the manual kind chips throughout.
 
-To turn it on: add `ANTHROPIC_API_KEY` to `.env.local` and Vercel. `AI_MODEL` and `AI_PROVIDER` have defaults.
+To turn it on: add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `.env.local` and Vercel, then pick one in Settings. Models and the fallback provider have defaults.
+
+## 11. Phase 4 status
+
+Written on 2026-09-16:
+
+- `src/lib/items/queries.ts` loads the Today data in three queries and partitions by Detroit-time day boundaries: Overdue, Today, Coming up (next 7 days), Waiting on (follow-ups with no date), Recently captured (undated items from the last 48 hours). People and project names are joined in two more queries.
+- `/` shows those sections with a tap-to-complete circle per row; every row links to `/items/[id]`.
+- `/items/[id]` has quick actions (Done or Reopen, Tomorrow, Next week), the linked people, a full edit form (title, kind, status, due date and time, workspace, project, priority, category, tags, notes), the original capture text, and Archive. Nothing is ever deleted.
+- `src/app/(app)/items/actions.ts` holds complete, reopen, snooze, update, and archive. Snooze and the form both go through `zonedToIso`, so dates typed on the phone mean Detroit time regardless of where the server runs.
+- Inbox's "Recently filed" rows now link to the detail page.
+
+## 12. Phase 5 status
+
+Written on 2026-09-16:
+
+- `/projects` lists active projects grouped by workspace with open counts, plus a new-project form. `/projects/[id]` shows everything filed under the project in Tasks, Waiting on, Notes, and Done sections, with an edit form and Archive.
+- `/people` lists everyone the classifier has met, sorted so people you are waiting on float to the top. `/people/[id]` answers "what am I waiting on Matt for" directly: a Waiting on section first, then everything else that mentions them. Name, aliases, and notes are editable; aliases feed the classifier's matching.
+- A Projects / People switch sits at the top of both list pages so People doesn't need a fifth tab.
+- People chips on the item page link to the person.
+- Inbox closes the loop on proposed projects: when the classifier suggests a project that doesn't exist, the review row gets an "Add project" button that creates it in the item's workspace, links the item, and clears the review.
+- Query helpers for all of this live in `src/lib/items/queries.ts`; counts are computed in the app rather than with per-row database calls, which is fine at personal scale.
+
+## 13. Phase 6 status
+
+Written on 2026-09-16:
+
+- `src/lib/retrieval/index.ts` has `searchItems`, a Postgres full-text search over the generated `search` column. Free text becomes an OR'd prefix query ("kalamazoo:* | network:*") after dropping stopwords, because AND misses too much on short notes. It also has `retrieveForQuestion`, which builds the model's context: every open or waiting item (capped at 300) plus full-text hits for the question across all statuses, so notes and finished items are reachable for "what did I say about X".
+- `AiProvider` gained `answer(question, ctx)`. Both the Anthropic and OpenAI implementations use structured outputs to return plain-text prose plus the ids of the items the answer relies on. Effort is medium. The answer system prompt is static and cached; the item list and question go in the user message.
+- `/assistant` is a GET form so questions are linkable and the back button works. With a key: the answer card, a "Based on" list of the cited items, and "Other matches" from full-text search. Without a key it degrades to plain search. Suggested questions from the brief are one-tap chips.
+- No tool-use loop. At personal scale the whole open set fits in one call, which is simpler, deterministic, and cheaper than a query planner. If the item count grows past the cap, the next step is a planning call or embeddings, not a rewrite.
+
+This completes all nine MVP items in the brief. Still to come: PWA install (Phase 7).

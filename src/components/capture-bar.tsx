@@ -32,6 +32,24 @@ export function CaptureBar() {
     };
   }, [state.ok, state.nonce, router]);
 
+  // "/" anywhere on the page jumps to the box, unless you're already typing.
+  useEffect(() => {
+    function onGlobalKey(e: KeyboardEvent) {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      textRef.current?.focus();
+    }
+    document.addEventListener("keydown", onGlobalKey);
+    return () => document.removeEventListener("keydown", onGlobalKey);
+  }, []);
+
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     // Enter sends; Shift+Enter adds a line.
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

@@ -3,10 +3,13 @@ import type { ReactNode } from "react";
 export function EmptyState({
   icon,
   title,
+  action,
   children,
 }: {
   icon?: ReactNode;
   title?: string;
+  /** Optional follow-up rendered under the text, e.g. example chips. */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -18,6 +21,7 @@ export function EmptyState({
       )}
       {title && <p className="text-sm font-bold">{title}</p>}
       <p className="max-w-xs text-sm leading-6 text-muted">{children}</p>
+      {action && <div className="mt-4 w-full">{action}</div>}
     </div>
   );
 }

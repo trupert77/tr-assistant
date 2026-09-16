@@ -90,3 +90,45 @@ export function formatDue(iso: string, timeZone: string, now = new Date()): stri
   }).format(d);
   return time === "9:00 AM" ? day : `${day} ${time}`;
 }
+
+/** Split an instant into the wall-clock date and time in `timeZone`, for form inputs. */
+export function isoToZonedParts(
+  iso: string,
+  timeZone: string,
+): { date: string; time: string } {
+  const parts = partsFormatter(timeZone).formatToParts(new Date(iso));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return {
+    date: `${get("year")}-${get("month")}-${get("day")}`,
+    time: `${get("hour")}:${get("minute")}`,
+  };
+}
+
+/** Add `days` to a YYYY-MM-DD string, calendar arithmetic only. */
+export function shiftLocalDate(date: string, days: number): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const shifted = new Date(Date.UTC(y, m - 1, d + days));
+  return shifted.toISOString().slice(0, 10);
+}
+
+/** Start of today and start of tomorrow in `timeZone`, as ISO instants. */
+export function localDayBounds(
+  now: Date,
+  timeZone: string,
+): { today: string; start: string; end: string } {
+  const today = localDate(now, timeZone);
+  return {
+    today,
+    start: zonedToIso(today, "00:00", timeZone)!,
+    end: zonedToIso(shiftLocalDate(today, 1), "00:00", timeZone)!,
+  };
+}
+
+/** YYYY-MM-DD of the next Monday strictly after today in `timeZone`. */
+export function nextMondayLocal(now: Date, timeZone: string): string {
+  const today = localDate(now, timeZone);
+  const [y, m, d] = today.split("-").map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday
+  const ahead = ((8 - dow) % 7) || 7;
+  return shiftLocalDate(today, ahead);
+}

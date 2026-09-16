@@ -1,7 +1,10 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { isAiProviderConfigured } from "@/lib/ai";
+import { AI_PREFERENCE_KEY, aiProviderNameSchema } from "@/lib/ai/preference";
 import { createSupabaseServerClient } from "@/lib/db/server";
 
 export type SettingsState = {
@@ -36,6 +39,20 @@ export async function setPassword(
   });
   if (error) return { error: error.message };
   return { message: "Password saved." };
+}
+
+/** Save which provider files captures. Stored in auth user metadata. */
+export async function setAiProvider(name: string): Promise<void> {
+  const parsed = aiProviderNameSchema.safeParse(name);
+  if (!parsed.success || !isAiProviderConfigured(parsed.data)) return;
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.auth.updateUser({
+    data: { [AI_PREFERENCE_KEY]: parsed.data },
+  });
+  if (error) throw new Error(error.message);
+  revalidatePath("/settings");
+  revalidatePath("/inbox");
 }
 
 export async function signOut() {

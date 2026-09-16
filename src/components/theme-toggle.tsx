@@ -1,9 +1,8 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { applyTheme, readTheme, subscribeTheme, type Theme } from "@/lib/theme";
 import { MonitorIcon, MoonIcon, SunIcon } from "./icons";
-
-type Theme = "system" | "light" | "dark";
 
 const options = [
   { value: "system", label: "System", Icon: MonitorIcon },
@@ -11,48 +10,9 @@ const options = [
   { value: "dark", label: "Dark", Icon: MoonIcon },
 ] as const satisfies readonly { value: Theme; label: string; Icon: typeof SunIcon }[];
 
-// localStorage is the source of truth; the DOM attribute mirrors it.
-const KEY = "theme";
-const listeners = new Set<() => void>();
-
-function readTheme(): Theme {
-  try {
-    const t = localStorage.getItem(KEY);
-    return t === "light" || t === "dark" ? t : "system";
-  } catch {
-    return "system";
-  }
-}
-
-function subscribe(cb: () => void) {
-  listeners.add(cb);
-  window.addEventListener("storage", cb);
-  return () => {
-    listeners.delete(cb);
-    window.removeEventListener("storage", cb);
-  };
-}
-
-function applyTheme(next: Theme) {
-  const root = document.documentElement;
-  if (next === "system") root.removeAttribute("data-theme");
-  else root.setAttribute("data-theme", next);
-  try {
-    if (next === "system") localStorage.removeItem(KEY);
-    else localStorage.setItem(KEY, next);
-  } catch {
-    // Storage unavailable (private mode etc.); still applies for this page.
-  }
-  listeners.forEach((l) => l());
-}
-
-/**
- * System / Light / Dark switch. The choice lives in localStorage under "theme"
- * and is applied as data-theme on <html>; app/layout.tsx re-applies it before
- * first paint on the next load.
- */
+/** System / Light / Dark switch. See lib/theme.ts for how the choice is stored. */
 export function ThemeToggle() {
-  const theme = useSyncExternalStore(subscribe, readTheme, () => "system");
+  const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "system");
 
   return (
     <div

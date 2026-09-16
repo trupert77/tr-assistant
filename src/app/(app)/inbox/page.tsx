@@ -1,5 +1,9 @@
+import Link from "next/link";
 import { EmptyState } from "@/components/empty-state";
-import { CheckIcon, InboxIcon, SparklesIcon } from "@/components/icons";
+import { ExampleCaptures } from "@/components/example-captures";
+import { CheckIcon, FolderIcon, InboxIcon, SparklesIcon } from "@/components/icons";
+import { KindLegend } from "@/components/kind-legend";
+import { SubmitChip } from "@/components/submit-chip";
 import { kindStyles, ui } from "@/components/ui";
 import { getAiProvider } from "@/lib/ai";
 import { formatDue } from "@/lib/dates";
@@ -7,9 +11,17 @@ import { createSupabaseServerClient } from "@/lib/db/server";
 import type { InboxItemRow, ItemKind, ItemRow } from "@/lib/db/types";
 import { getServerEnv } from "@/lib/env";
 import { formatRelative } from "@/lib/format";
-import { acceptAction, classifyAction, promoteAction } from "../actions";
+import { classificationSchema } from "@/lib/ai/types";
+import { acceptAction, classifyAction, createProjectFromReviewAction, promoteAction } from "../actions";
 
 const KINDS: ItemKind[] = ["task", "followup", "note"];
+
+/** The project name the classifier proposed, when it did not match an existing one. */
+function proposedProject(row: InboxItemRow, item?: { project_id: string | null }): string | null {
+  if (row.status !== "needs_review" || !item || item.project_id) return null;
+  const parsed = classificationSchema.safeParse(row.ai_result);
+  return parsed.success ? parsed.data.project_name?.trim() || null : null;
+}
 
 type Filed = Pick<ItemRow, "id" | "kind" | "title" | "created_at" | "due_at">;
 
@@ -56,9 +68,13 @@ export default async function InboxPage() {
             </span>
           )}
         </div>
-
+        <KindLegend />
         {count === 0 ? (
-          <EmptyState icon={<InboxIcon size={22} />} title="All clear">
+          <EmptyState
+            icon={<InboxIcon size={22} />}
+            title="All clear"
+            action={!filed?.length ? <ExampleCaptures /> : undefined}
+          >
             {aiEnabled
               ? "Captures are filed automatically. Anything the assistant wasn't sure about waits here."
               : "Anything you capture shows up here until you file it."}
@@ -83,17 +99,22 @@ export default async function InboxPage() {
           <h2 className={ui.sectionTitle}>Recently filed</h2>
           <ul className={`${ui.card} divide-y divide-line`}>
             {(filed as Filed[]).map((item) => (
-              <li key={item.id} className="flex items-center gap-3 px-5 py-3.5 text-sm">
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${kindStyles[item.kind].dot}`}
-                  aria-hidden
-                />
-                <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                <span className="shrink-0 text-xs text-faint">
-                  {item.due_at
-                    ? formatDue(item.due_at, timeZone)
-                    : `${kindStyles[item.kind].label} · ${formatRelative(item.created_at, timeZone)}`}
-                </span>
+              <li key={item.id}>
+                <Link
+                  href={`/items/${item.id}`}
+                  className="flex items-center gap-3 px-5 py-3.5 text-sm transition-colors hover:bg-surface-2"
+                >
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${kindStyles[item.kind].dot}`}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                  <span className="shrink-0 text-xs text-muted">
+                    {item.due_at
+                      ? formatDue(item.due_at, timeZone)
+                      : `${kindStyles[item.kind].label} · ${formatRelative(item.created_at, timeZone)}`}
+                  </span>
+                </Link>
               </li>
             ))}
           </ul>
@@ -114,6 +135,7 @@ function InboxCard({
   timeZone: string;
   aiEnabled: boolean;
 }) {
+  const newProject = proposedProject(row, item);
   const meta = [
     formatRelative(row.created_at, timeZone),
     row.source !== "web" ? `via ${row.source}` : null,
@@ -166,9 +188,20 @@ function InboxCard({
             {row.status === "needs_review" && (
               <form action={acceptAction}>
                 <input type="hidden" name="inboxItemId" value={row.id} />
-                <button type="submit" className={`${ui.chip} bg-linear-to-r from-accent to-accent-2 text-accent-foreground shadow-glow`}>
+                <SubmitChip className="bg-linear-to-r from-accent to-accent-2 text-accent-foreground shadow-glow">
                   <CheckIcon size={14} strokeWidth={2.4} />
                   Looks right
+                </SubmitChip>
+              </form>
+            )}
+
+            {newProject && (
+              <form action={createProjectFromReviewAction}>
+                <input type="hidden" name="inboxItemId" value={row.id} />
+                <input type="hidden" name="name" value={newProject} />
+                <button type="submit" className={`${ui.chip} bg-accent-soft text-accent`}>
+                  <FolderIcon size={14} />
+                  Add project &ldquo;{newProject}&rdquo;
                 </button>
               </form>
             )}
@@ -176,26 +209,20 @@ function InboxCard({
             {aiEnabled && (row.status === "pending" || row.status === "failed") && (
               <form action={classifyAction}>
                 <input type="hidden" name="inboxItemId" value={row.id} />
-                <button type="submit" className={`${ui.chip} bg-accent-soft text-accent`}>
+                <SubmitChip className="bg-accent-soft text-accent">
                   <SparklesIcon size={14} />
                   {row.status === "failed" ? "Retry" : "Auto-file"}
-                </button>
+                </SubmitChip>
               </form>
             )}
 
             <form action={promoteAction} className="flex gap-1.5">
               <input type="hidden" name="inboxItemId" value={row.id} />
               {KINDS.filter((k) => k !== item?.kind).map((kind) => (
-                <button
-                  key={kind}
-                  type="submit"
-                  name="kind"
-                  value={kind}
-                  className={`${ui.chip} ${kindStyles[kind].chip}`}
-                >
+                <SubmitChip key={kind} name="kind" value={kind} className={kindStyles[kind].chip}>
                   <span className={`h-1.5 w-1.5 rounded-full ${kindStyles[kind].dot}`} />
                   {kindStyles[kind].label}
-                </button>
+                </SubmitChip>
               ))}
             </form>
           </div>

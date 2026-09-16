@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono } from "next/font/google";
+import { ThemeColorSync } from "@/components/theme-color-sync";
 import "./globals.css";
 
 const mono = JetBrains_Mono({
@@ -11,7 +12,10 @@ export const metadata: Metadata = {
   title: "TR Assistant",
   description:
     "A personal assistant that reads your calendar, inbox, and notes, then helps you plan, write, and follow through.",
-  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "TR Assistant" },
+  // "default" keeps status-bar text readable in both themes; translucent
+  // would draw white text over the cream canvas when Light is forced.
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "TR Assistant" },
+  icons: { apple: "/icons/apple-180.png" },
 };
 
 export const viewport: Viewport = {
@@ -40,7 +44,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <ThemeColorSync />
+        {children}
+      </body>
     </html>
   );
 }

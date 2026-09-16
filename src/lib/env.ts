@@ -21,11 +21,16 @@ const serverSchema = z.object({
   // never be exposed to the browser.
   CAPTURE_API_TOKEN: z.string().min(16).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
-  // AI classification. Without ANTHROPIC_API_KEY captures stay in the inbox
-  // for manual filing; nothing else breaks.
+  // AI classification. Without an API key captures stay in the inbox for
+  // manual filing; nothing else breaks. The user picks a provider in
+  // Settings; AI_PROVIDER is the fallback when they have not, and when it is
+  // unset too, whichever key is present is used (Anthropic first). The model
+  // vars override each provider's default in src/lib/ai/index.ts.
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
-  AI_PROVIDER: z.enum(["anthropic"]).default("anthropic"),
-  AI_MODEL: z.string().min(1).default("claude-opus-5"),
+  ANTHROPIC_MODEL: z.string().min(1).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  OPENAI_MODEL: z.string().min(1).optional(),
+  AI_PROVIDER: z.enum(["anthropic", "openai"]).optional(),
 });
 
 export type ServerEnv = z.infer<typeof serverSchema>;

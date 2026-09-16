@@ -45,8 +45,46 @@ export type ClassifyResult = {
   model: string;
 };
 
+/** One stored item, flattened for the answer prompt. */
+export type ContextItem = {
+  id: string;
+  kind: "task" | "followup" | "note";
+  status: "open" | "waiting" | "done" | "archived";
+  title: string;
+  body: string | null;
+  priority: "low" | "normal" | "high" | null;
+  due_at: string | null;
+  category: string | null;
+  tags: string[];
+  project: string | null;
+  people: { name: string; role: "waiting_on" | "mentioned" | "owner" }[];
+  created_at: string;
+};
+
+export type AnswerContext = {
+  now: Date;
+  timeZone: string;
+  items: ContextItem[];
+  /** True when the item list was cut off, so the model can say so. */
+  truncated: boolean;
+};
+
+export const answerSchema = z.object({
+  /** Plain text. Short lines, "-" bullets allowed, no markdown headings. */
+  answer: z.string(),
+  /** Ids from the provided list that the answer relies on, most relevant first. */
+  cited_item_ids: z.array(z.string()),
+});
+
+export type AnswerResult = {
+  answer: string;
+  citedItemIds: string[];
+  model: string;
+};
+
 /** The one interface the rest of the app depends on. Swap providers here. */
 export interface AiProvider {
   readonly name: string;
   classify(text: string, ctx: ClassifyContext): Promise<ClassifyResult>;
+  answer(question: string, ctx: AnswerContext): Promise<AnswerResult>;
 }

@@ -21,7 +21,8 @@
   --line-strong: light-dark(#d3c9be, #463e39);
   --foreground: light-dark(#1c1917, #f3ece5);
   --muted: light-dark(#736a63, #a69c94);
-  --faint: light-dark(#a69c94, #6b625c);
+  /* Faint stays readable: ~3.5:1 on white, ~3.8:1 on the dark card. */
+  --faint: light-dark(#8f857d, #7d746d);
 
   --accent: light-dark(#ea580c, #fb923c);
   --accent-2: light-dark(#f59e0b, #fbbf24);

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getAiProvider } from "@/lib/ai";
+import { configuredAiProviders, getAiProvider } from "@/lib/ai";
 import type { ClassifyContext } from "@/lib/ai";
+import { readAiPreference } from "@/lib/ai/preference";
 import { zonedToIso } from "@/lib/dates";
 import type { Database } from "@/lib/db/types";
 import { getServerEnv } from "@/lib/env";
@@ -19,10 +20,12 @@ export const REVIEW_THRESHOLD = 0.7;
  * - classifier throws       → row becomes `failed` with the error text
  * - low confidence or an unknown project → item created, row `needs_review`
  * - otherwise               → item created, row `processed`
+ *
+ * The provider is the user's saved choice from Settings when set, else the
+ * env default. Each row records the model that filed it in `ai_model`.
  */
 export async function classifyInboxItem(db: Db, inboxItemId: string): Promise<void> {
-  const provider = getAiProvider();
-  if (!provider) return;
+  if (configuredAiProviders().length === 0) return;
 
   const { data: inbox } = await db
     .from("inbox_items")
@@ -30,6 +33,9 @@ export async function classifyInboxItem(db: Db, inboxItemId: string): Promise<vo
     .eq("id", inboxItemId)
     .single();
   if (!inbox || inbox.status === "processed") return;
+
+  const provider = getAiProvider(await readAiPreference(db, inbox.user_id));
+  if (!provider) return;
 
   await db
     .from("inbox_items")

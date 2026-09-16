@@ -4,6 +4,9 @@ export const ui = {
   card: "rounded-3xl border border-line bg-surface shadow-card",
   cardPad: "rounded-3xl border border-line bg-surface p-5 shadow-card",
 
+  /** A row inside a `card` list (pair with divide-y divide-line on the list). */
+  row: "flex items-start gap-3 px-5 py-3.5",
+
   pageTitle: "text-2xl font-bold tracking-tight",
   /** Small-caps label with a `//` comment marker in the accent color. */
   sectionTitle:

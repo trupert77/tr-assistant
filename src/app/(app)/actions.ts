@@ -91,3 +91,59 @@ export async function classifyAction(formData: FormData): Promise<void> {
   await classifyInboxItem(db, parsed.data.inboxItemId);
   refresh();
 }
+
+const reviewProjectSchema = idSchema.extend({
+  name: z.string().trim().min(1).max(120),
+});
+
+/**
+ * The classifier proposed a project that doesn't exist. Create it (in the
+ * item's workspace), link the item, and mark the inbox row processed.
+ */
+export async function createProjectFromReviewAction(formData: FormData): Promise<void> {
+  const parsed = reviewProjectSchema.safeParse({
+    inboxItemId: formData.get("inboxItemId"),
+    name: formData.get("name"),
+  });
+  if (!parsed.success) return;
+
+  const db = await createSupabaseServerClient();
+  const { data: inbox } = await db
+    .from("inbox_items")
+    .select("id, item_id")
+    .eq("id", parsed.data.inboxItemId)
+    .single();
+  if (!inbox?.item_id) return;
+
+  const { data: item } = await db
+    .from("items")
+    .select("id, workspace_id")
+    .eq("id", inbox.item_id)
+    .single();
+  if (!item) return;
+
+  // Reuse an existing project of the same name rather than duplicating.
+  const { data: existing } = await db
+    .from("projects")
+    .select("id")
+    .ilike("name", parsed.data.name)
+    .limit(1)
+    .maybeSingle();
+
+  let projectId = existing?.id;
+  if (!projectId) {
+    const { data: created } = await db
+      .from("projects")
+      .insert({ name: parsed.data.name, workspace_id: item.workspace_id })
+      .select("id")
+      .single();
+    if (!created) return;
+    projectId = created.id;
+  }
+
+  await db.from("items").update({ project_id: projectId }).eq("id", item.id);
+  await db.from("inbox_items").update({ status: "processed" }).eq("id", inbox.id);
+
+  refresh();
+  revalidatePath("/projects");
+}

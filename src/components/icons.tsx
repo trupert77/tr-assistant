@@ -104,6 +104,33 @@ export function MoonIcon(p: IconProps) {
   );
 }
 
+export function HelpIcon(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.3 9.2a2.8 2.8 0 0 1 5.4.9c0 1.8-2.7 2.2-2.7 3.9" />
+      <path d="M12 17.2h.01" />
+    </svg>
+  );
+}
+
+/** Three-quarter arc; pair with `animate-spin`. */
+export function LoaderIcon(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M21 12a9 9 0 1 1-6.2-8.56" />
+    </svg>
+  );
+}
+
+export function ArrowRightIcon(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
 export function MonitorIcon(p: IconProps) {
   return (
     <svg {...base(p)}>

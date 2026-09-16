@@ -1,0 +1,250 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { localDayBounds, shiftLocalDate, zonedToIso } from "@/lib/dates";
+import type { Database, ItemRow, PersonRole, PersonRow, ProjectRow, WorkspaceRow } from "@/lib/db/types";
+
+type Db = SupabaseClient<Database>;
+
+export type TodayData = {
+  overdue: ItemRow[];
+  today: ItemRow[];
+  upcoming: ItemRow[];
+  waiting: ItemRow[];
+  recent: ItemRow[];
+  /** item id → linked people with their role, for the meta line. */
+  people: Map<string, LinkedPerson[]>;
+  /** project id → name. */
+  projects: Map<string, string>;
+};
+
+const UPCOMING_DAYS = 7;
+const RECENT_HOURS = 48;
+
+/** Everything the Today screen shows, partitioned by when it is due. */
+export async function loadToday(
+  db: Db,
+  timeZone: string,
+  now: Date = new Date(),
+): Promise<TodayData> {
+  const { today, start, end } = localDayBounds(now, timeZone);
+  const weekEnd = zonedToIso(shiftLocalDate(today, UPCOMING_DAYS), "00:00", timeZone)!;
+  const recentSince = new Date(now.getTime() - RECENT_HOURS * 3_600_000).toISOString();
+
+  const [{ data: dated }, { data: waitingUndated }, { data: recentUndated }] =
+    await Promise.all([
+      db
+        .from("items")
+        .select()
+        .in("status", ["open", "waiting"])
+        .not("due_at", "is", null)
+        .lt("due_at", weekEnd)
+        .order("due_at"),
+      db
+        .from("items")
+        .select()
+        .eq("kind", "followup")
+        .eq("status", "waiting")
+        .is("due_at", null)
+        .order("created_at", { ascending: false }),
+      db
+        .from("items")
+        .select()
+        .in("status", ["open", "waiting"])
+        .is("due_at", null)
+        .gte("created_at", recentSince)
+        .order("created_at", { ascending: false })
+        .limit(8),
+    ]);
+
+  const overdue: ItemRow[] = [];
+  const todayItems: ItemRow[] = [];
+  const upcoming: ItemRow[] = [];
+  for (const item of dated ?? []) {
+    const due = item.due_at!;
+    if (due < start) overdue.push(item);
+    else if (due < end) todayItems.push(item);
+    else upcoming.push(item);
+  }
+
+  const waiting = waitingUndated ?? [];
+  const waitingIds = new Set(waiting.map((i) => i.id));
+  const recent = (recentUndated ?? []).filter((i) => !waitingIds.has(i.id));
+
+  const all = [...overdue, ...todayItems, ...upcoming, ...waiting, ...recent];
+  const [people, projects] = await Promise.all([
+    loadPeopleFor(db, all.map((i) => i.id)),
+    loadProjectNames(db),
+  ]);
+
+  return { overdue, today: todayItems, upcoming, waiting, recent, people, projects };
+}
+
+export type LinkedPerson = { id: string; name: string; role: PersonRole };
+
+/** item id → linked people, for a set of items. */
+export async function loadPeopleFor(
+  db: Db,
+  itemIds: string[],
+): Promise<Map<string, LinkedPerson[]>> {
+  const map = new Map<string, LinkedPerson[]>();
+  if (!itemIds.length) return map;
+
+  const { data: links } = await db
+    .from("item_people")
+    .select("item_id, person_id, role")
+    .in("item_id", itemIds);
+  if (!links?.length) return map;
+
+  const personIds = [...new Set(links.map((l) => l.person_id))];
+  const { data: people } = await db.from("people").select("id, name").in("id", personIds);
+  const nameById = new Map((people ?? []).map((p) => [p.id, p.name]));
+
+  for (const link of links) {
+    const name = nameById.get(link.person_id);
+    if (!name) continue;
+    const list = map.get(link.item_id) ?? [];
+    list.push({ id: link.person_id, name, role: link.role });
+    map.set(link.item_id, list);
+  }
+  return map;
+}
+
+export async function loadProjectNames(db: Db): Promise<Map<string, string>> {
+  const { data } = await db.from("projects").select("id, name");
+  return new Map((data ?? []).map((p) => [p.id, p.name]));
+}
+
+export type ItemOptions = {
+  workspaces: Pick<WorkspaceRow, "id" | "name" | "slug">[];
+  projects: Pick<ProjectRow, "id" | "name" | "workspace_id">[];
+};
+
+/** Choices for the edit form selects. */
+export async function loadItemOptions(db: Db): Promise<ItemOptions> {
+  const [{ data: workspaces }, { data: projects }] = await Promise.all([
+    db.from("workspaces").select("id, name, slug").order("sort_order"),
+    db.from("projects").select("id, name, workspace_id").eq("status", "active").order("name"),
+  ]);
+  return { workspaces: workspaces ?? [], projects: projects ?? [] };
+}
+
+// ---------------------------------------------------------------------------
+// Projects and people
+// ---------------------------------------------------------------------------
+
+export type ProjectSummary = Pick<ProjectRow, "id" | "name" | "workspace_id" | "status"> & {
+  workspaceName: string | null;
+  openCount: number;
+};
+
+/** Active projects with a count of open items each, grouped by workspace order. */
+export async function loadProjectSummaries(db: Db): Promise<ProjectSummary[]> {
+  const [{ data: projects }, { data: workspaces }, { data: open }] = await Promise.all([
+    db.from("projects").select("id, name, workspace_id, status").eq("status", "active").order("name"),
+    db.from("workspaces").select("id, name, sort_order").order("sort_order"),
+    db.from("items").select("project_id").in("status", ["open", "waiting"]).not("project_id", "is", null),
+  ]);
+
+  const counts = new Map<string, number>();
+  for (const row of open ?? []) {
+    if (row.project_id) counts.set(row.project_id, (counts.get(row.project_id) ?? 0) + 1);
+  }
+  const wsName = new Map((workspaces ?? []).map((w) => [w.id, w.name]));
+  const wsOrder = new Map((workspaces ?? []).map((w) => [w.id, w.sort_order]));
+
+  return (projects ?? [])
+    .map((p) => ({
+      ...p,
+      workspaceName: p.workspace_id ? wsName.get(p.workspace_id) ?? null : null,
+      openCount: counts.get(p.id) ?? 0,
+    }))
+    .sort((a, b) => {
+      const ao = a.workspace_id ? wsOrder.get(a.workspace_id) ?? 99 : 100;
+      const bo = b.workspace_id ? wsOrder.get(b.workspace_id) ?? 99 : 100;
+      return ao - bo || a.name.localeCompare(b.name);
+    });
+}
+
+export type ItemGroups = {
+  tasks: ItemRow[];
+  waiting: ItemRow[];
+  notes: ItemRow[];
+  done: ItemRow[];
+};
+
+function groupItems(items: ItemRow[]): ItemGroups {
+  const g: ItemGroups = { tasks: [], waiting: [], notes: [], done: [] };
+  for (const i of items) {
+    if (i.status === "done" || i.status === "archived") g.done.push(i);
+    else if (i.kind === "note") g.notes.push(i);
+    else if (i.kind === "followup") g.waiting.push(i);
+    else g.tasks.push(i);
+  }
+  return g;
+}
+
+/** Everything linked to one project. */
+export async function loadProjectItems(db: Db, projectId: string): Promise<ItemGroups> {
+  const { data } = await db
+    .from("items")
+    .select()
+    .eq("project_id", projectId)
+    .neq("status", "archived")
+    .order("due_at", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: false });
+  return groupItems(data ?? []);
+}
+
+export type PersonSummary = Pick<PersonRow, "id" | "name" | "aliases"> & {
+  waitingCount: number;
+  totalCount: number;
+};
+
+/** All people with how many open items mention them and how many are waiting on them. */
+export async function loadPeopleSummaries(db: Db): Promise<PersonSummary[]> {
+  const [{ data: people }, { data: links }, { data: open }] = await Promise.all([
+    db.from("people").select("id, name, aliases").order("name"),
+    db.from("item_people").select("item_id, person_id, role"),
+    db.from("items").select("id").in("status", ["open", "waiting"]),
+  ]);
+  const openIds = new Set((open ?? []).map((i) => i.id));
+  const waiting = new Map<string, number>();
+  const total = new Map<string, number>();
+  for (const l of links ?? []) {
+    if (!openIds.has(l.item_id)) continue;
+    total.set(l.person_id, (total.get(l.person_id) ?? 0) + 1);
+    if (l.role === "waiting_on") waiting.set(l.person_id, (waiting.get(l.person_id) ?? 0) + 1);
+  }
+  return (people ?? []).map((p) => ({
+    ...p,
+    waitingCount: waiting.get(p.id) ?? 0,
+    totalCount: total.get(p.id) ?? 0,
+  }));
+}
+
+/** Items linked to one person, split into "waiting on them" and everything else. */
+export async function loadPersonItems(
+  db: Db,
+  personId: string,
+): Promise<{ waitingOn: ItemRow[]; other: ItemGroups }> {
+  const { data: links } = await db
+    .from("item_people")
+    .select("item_id, role")
+    .eq("person_id", personId);
+  if (!links?.length) {
+    return { waitingOn: [], other: { tasks: [], waiting: [], notes: [], done: [] } };
+  }
+  const { data: items } = await db
+    .from("items")
+    .select()
+    .in("id", links.map((l) => l.item_id))
+    .neq("status", "archived")
+    .order("due_at", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: false });
+
+  const waitingIds = new Set(links.filter((l) => l.role === "waiting_on").map((l) => l.item_id));
+  const waitingOn = (items ?? []).filter(
+    (i) => waitingIds.has(i.id) && i.status !== "done" && i.status !== "archived",
+  );
+  const rest = (items ?? []).filter((i) => !waitingOn.includes(i));
+  return { waitingOn, other: groupItems(rest) };
+}

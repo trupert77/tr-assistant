@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BottomNav } from "@/components/bottom-nav";
 import { CaptureBar } from "@/components/capture-bar";
-import { LogoMark, SettingsIcon } from "@/components/icons";
+import { HelpIcon, LogoMark, SettingsIcon } from "@/components/icons";
 import { getCurrentUser } from "@/lib/db/server";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
@@ -22,13 +22,22 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
               tr<span className="text-accent">.</span>assistant
             </span>
           </Link>
-          <Link
-            href="/settings"
-            aria-label="Settings"
-            className="flex h-11 w-11 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            <SettingsIcon size={21} />
-          </Link>
+          <div className="flex items-center gap-0.5">
+            <Link
+              href="/guide"
+              aria-label="Guide"
+              className="flex h-11 w-11 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              <HelpIcon size={21} />
+            </Link>
+            <Link
+              href="/settings"
+              aria-label="Settings"
+              className="flex h-11 w-11 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              <SettingsIcon size={21} />
+            </Link>
+          </div>
         </div>
       </header>
       <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-8 px-4 pb-36 pt-2">
