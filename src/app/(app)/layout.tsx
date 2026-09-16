@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BottomNav } from "@/components/bottom-nav";
+import { CaptureBar } from "@/components/capture-bar";
 import { getCurrentUser } from "@/lib/db/server";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
@@ -20,7 +21,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           Settings
         </Link>
       </header>
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-24 pt-2">
+      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 pb-24 pt-2">
+        <CaptureBar />
         {children}
       </main>
       <BottomNav />

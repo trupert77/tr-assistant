@@ -2,7 +2,8 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { publicEnv } from "@/lib/env";
 
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+// /api/capture authenticates with its own bearer token, not a session.
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/api/capture"];
 
 /**
  * Runs before every matched request. Refreshes the Supabase session cookie

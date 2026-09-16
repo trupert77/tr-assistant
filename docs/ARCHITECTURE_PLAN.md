@@ -296,4 +296,16 @@ Written on 2026-09-16, not yet run against a real Supabase project:
 - `supabase/migrations/20260916000000_init.sql` creates every table, RLS policy, index, and the new-user trigger that seeds the five workspaces.
 - `.env.example` lists what `.env.local` needs.
 
-To finish Phase 1, Travis needs to: create a Supabase project, run the migration (SQL editor or `npx supabase db push`), turn off "Allow new users to sign up" in Auth settings after the first login, add the site URL and `/auth/callback` to the Auth redirect allow-list, and fill in `.env.local` plus the same variables in Vercel.
+Phase 1 went live on 2026-09-16 at https://tr-assistant-fawn.vercel.app, deployed through the Vercel GitHub integration.
+
+## 9. Phase 2 status
+
+Written on 2026-09-16:
+
+- `src/lib/capture/index.ts` holds `captureText` (the only write on the capture path) and `promoteInboxItem` (creates the `items` row and marks the inbox row processed; idempotent on `inbox_item_id`). Phase 3 will call the same `promoteInboxItem` with AI-derived fields.
+- `src/components/capture-bar.tsx` is mounted in the app layout, so it is at the top of every screen. Enter sends, Shift+Enter adds a line.
+- `/inbox` lists unprocessed captures newest first with Task / Follow-up / Note buttons, plus the ten most recently filed items.
+- `POST /api/capture` with a bearer token, for iOS Shortcuts. It needs the service-role key because there is no browser session, so it is enabled only when both `CAPTURE_API_TOKEN` and `SUPABASE_SERVICE_ROLE_KEY` are set. This is the one deliberate use of the service-role key in the MVP.
+- `src/lib/db/types.ts` is a hand-written `Database` type for the two tables in use; replace with `supabase gen types` output when convenient.
+
+Not in Phase 2 by design: editing or completing items (Phase 4), any AI (Phase 3).

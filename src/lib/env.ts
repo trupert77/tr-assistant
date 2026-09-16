@@ -16,6 +16,11 @@ const serverSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.url(),
   ALLOWED_EMAIL: z.email(),
   APP_TIMEZONE: z.string().min(1).default("America/Detroit"),
+  // Both optional. The POST /api/capture endpoint is enabled only when both
+  // are set. The service-role key bypasses row-level security and must
+  // never be exposed to the browser.
+  CAPTURE_API_TOKEN: z.string().min(16).optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
 });
 
 export type ServerEnv = z.infer<typeof serverSchema>;
