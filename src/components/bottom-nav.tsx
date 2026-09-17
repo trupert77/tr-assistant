@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FolderIcon, InboxIcon, SparklesIcon, SunIcon } from "./icons";
+import { FolderIcon, InboxIcon, MapIcon, SparklesIcon, SunIcon } from "./icons";
 
 const tabs = [
   { href: "/", label: "Today", Icon: SunIcon },
   { href: "/inbox", label: "Inbox", Icon: InboxIcon },
   { href: "/projects", label: "Projects", Icon: FolderIcon },
-  { href: "/assistant", label: "Assistant", Icon: SparklesIcon },
+  { href: "/map", label: "Map", Icon: MapIcon },
+  { href: "/assistant", label: "Ask", Icon: SparklesIcon },
 ] as const;
 
 /** Floating pill bar, detached from the bottom edge. */
@@ -21,7 +22,7 @@ export function BottomNav() {
       className="pointer-events-none fixed inset-x-0 bottom-0 z-10 flex justify-center px-4"
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 14px)" }}
     >
-      <ul className="pointer-events-auto grid w-full max-w-md grid-cols-4 gap-1 rounded-full border border-line bg-surface/85 p-1.5 shadow-float backdrop-blur-xl">
+      <ul className="pointer-events-auto grid w-full max-w-md grid-cols-5 gap-1 rounded-full border border-line bg-surface/85 p-1.5 shadow-float backdrop-blur-xl">
         {tabs.map(({ href, label, Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (

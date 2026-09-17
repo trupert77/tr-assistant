@@ -30,4 +30,5 @@ export const kindStyles = {
   task: { label: "Task", chip: "bg-task-soft text-task", dot: "bg-task" },
   followup: { label: "Follow-up", chip: "bg-followup-soft text-followup", dot: "bg-followup" },
   note: { label: "Note", chip: "bg-note-soft text-note", dot: "bg-note" },
+  goal: { label: "Goal", chip: "bg-goal-soft text-goal", dot: "bg-goal" },
 } as const;

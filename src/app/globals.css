@@ -37,6 +37,8 @@
   --followup-soft: light-dark(#f1eafe, #251a3d);
   --note: light-dark(#059669, #34d399);
   --note-soft: light-dark(#e4f7ef, #0f2a22);
+  --goal: light-dark(#db2777, #f472b6);
+  --goal-soft: light-dark(#fde7f1, #361526);
 
   --danger: light-dark(#dc2626, #f87171);
   --danger-soft: light-dark(#fee2e2, #3a1717);
@@ -72,6 +74,8 @@
   --color-followup-soft: var(--followup-soft);
   --color-note: var(--note);
   --color-note-soft: var(--note-soft);
+  --color-goal: var(--goal);
+  --color-goal-soft: var(--goal-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
 

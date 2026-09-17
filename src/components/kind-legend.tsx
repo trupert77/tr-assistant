@@ -1,10 +1,10 @@
 import { SparklesIcon } from "./icons";
 import { kindStyles } from "./ui";
 
-const KINDS = ["task", "followup", "note"] as const;
+const KINDS = ["task", "followup", "note", "goal"] as const;
 
 /**
- * One-line color key: the three item kinds plus what orange means.
+ * One-line color key: the item kinds plus what orange means.
  * Sits under the Inbox header; also reused on the guide page.
  */
 export function KindLegend({ showAccent = true }: { showAccent?: boolean }) {

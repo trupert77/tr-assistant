@@ -4,7 +4,7 @@ import type { ItemGroups as Groups, LinkedPerson } from "@/lib/items/queries";
 import { EmptyState } from "./empty-state";
 import { ItemRow } from "./item-row";
 
-/** Tasks / Waiting on / Notes / Done sections, shared by project and person pages. */
+/** Goals / Tasks / Waiting on / Notes / Done sections, shared by project and person pages. */
 export function ItemGroups({
   groups,
   timeZone,
@@ -19,6 +19,7 @@ export function ItemGroups({
   emptyText: string;
 }) {
   const sections: { title: string; items: Item[] }[] = [
+    { title: "Goals", items: groups.goals },
     { title: "Tasks", items: groups.tasks },
     { title: "Waiting on", items: groups.waiting },
     { title: "Notes", items: groups.notes },
