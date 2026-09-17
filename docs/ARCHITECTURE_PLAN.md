@@ -67,7 +67,7 @@ Supabase (Postgres + Auth + RLS)          Anthropic API
 | `/items/[id]` | View/edit one task, follow-up, or note |
 | `/people`, `/people/[id]` | Everyone the classifier has met, and everything involving one person |
 | `/map` | Everything open as a graph: projects and people as hubs, links, and goal paths |
-| `/ceco` | The CECO portal mirrored read-only: areas, pages, what shipped, and your items about each page |
+| `/ceco` | The CECO portal mirrored read-only: the initiatives board, areas, pages, what shipped, and your items about each page |
 | `/focus` | The top three for right now, nothing else |
 | `/someday` | Every open item with no date, oldest first |
 | `/review` | The weekly review: overdue, stale follow-ups, undated tasks, quiet projects |
@@ -506,3 +506,30 @@ Verified: CECO's 10 new tests and its existing 88 proxy tests pass, `tsc` and `e
 Also verified live, against a running CECO and against production. Locally: no token gives 401 and the right token gives 200, and `fetchCecoScope` parsed the real 68-page payload with no email address anywhere in it. Against `www.ceco.info`: the endpoint is deployed and answers 503 ("Assistant API is not configured") because Vercel has no `ASSISTANT_API_TOKEN` yet, and the apex reports the host to use. The temporary tests that did this needed a running server, so they were removed rather than left to fail in CI.
 
 Still unverified: a sync through the app itself (needs the migration run and the token in Vercel), and the classifier's page picks on real captures.
+
+## 18. The CECO initiatives board, mirrored
+
+Written on 2026-09-17, after Phase 10. Travis's ask: "pull initiatives from ceco.info/initiatives". That board is the private project tracker in CECO — what he is building there, with ordered steps, a log, and dependencies between entries. Phase 10 deliberately left it out: the scope endpoint reads only CECO's static registries, and the plan above says anything needing a query "would be a new endpoint in CECO with its own review, not a widening of this one". This is that endpoint.
+
+It spans both repos again. **In CECO**: deploy and set `ASSISTANT_INITIATIVES_BOARD` to the board's own address. **Here**: nothing — no migration, no new env var. Until CECO is set, `/ceco` looks exactly as it did.
+
+**CECO side** (its `CHANGELOG.md` has the detail)
+
+- `GET /api/assistant/initiatives` returns `{ schema: 1, app, board, path, initiatives }`, each initiative with its steps, its newest 20 log entries, and `feeds_into` / `waiting_on` as id lists. Same bearer token as the scope, and `/api/assistant/initiatives` is the second entry in `PUBLIC_TOKEN_PATHS`.
+- **Which board is fixed by the environment, not the request.** `ASSISTANT_INITIATIVES_BOARD` names it and has to be an address in `INITIATIVES_OWNER_EMAILS`. There is no board parameter anywhere in the route, so a leaked token reads one board; a typo reads nothing rather than answering with a plausible empty board; and adding a second owner in CECO does not widen what this app sees.
+- Because it does query the database, the token alone does not open it: both variables must be set or it answers 503 naming the missing one. `owner_employee_id`, `graph_x`/`graph_y`, and `board_email` are left out of the payload; `owner_name` stays, since it is the answer to "who is driving this".
+- Read-only, like the scope: `GET` is the only method, and nothing in the module writes.
+
+**This side**
+
+- `src/lib/ceco/client.ts` now holds the transport both endpoints share — the fetch, the never-followed redirects, the translated errors, and the `external_scopes` read/write. `index.ts` keeps the scope, `initiatives.ts` the board. A 503 now surfaces CECO's own message ("CECO: ASSISTANT_INITIATIVES_BOARD is not set…"), which is more use than a guess from this side.
+- The board is a second row in `external_scopes`, source `ceco_initiatives`, so **no migration**: that table takes any source and a `jsonb` payload. The copy is what every reader uses, as with the scope.
+- The tick refreshes the board when it is more than **90 minutes** old, against six hours for the scope: pages change when CECO deploys, but a step gets checked off mid-afternoon. `TickResult` reports both. Sync now on `/ceco` pulls both, and reports the board separately, because CECO can have the scope working while the board endpoint is off.
+- **`/ceco`** leads with the board, grouped Active / Blocked and on hold / Ideas / Done, each row showing progress, the next unchecked step, the target date (late in red), and how many things it waits on. `?initiative=<id>` opens one: its steps as a read-only checklist, the chain in both directions as links to the other initiatives, its notes, and its log. A status CECO invents later lands in an "Other" group with its own name rather than disappearing.
+- Every screen says the copy is read-only and dated, and links out to the board. CECO has no per-initiative deep link, so the links land on `/initiatives`.
+
+**Not done, on purpose.** Items cannot be linked to an initiative yet (that needs a table like `item_ceco_pages`, a classifier field, and a prompt that can tell an initiative from a page), initiatives are not on the mind map, and the assistant cannot answer questions about them. Each is a small addition on top of this mirror rather than a change to it.
+
+Verified: CECO's 11 new tests and its scope tests pass, `tsc` and `eslint` clean on both sides; here 71 tests pass. Live against a CECO dev server: the token alone gives 503 naming `ASSISTANT_INITIATIVES_BOARD`, and with it set the real board comes back as 6 initiatives, 23 kB, which `fetchCecoInitiatives` parsed with no schema complaint and with none of the withheld columns present. That temporary test needed a running server, so it was removed rather than left to fail in CI.
+
+Still unverified: production (needs the deploy and `ASSISTANT_INITIATIVES_BOARD` in Vercel), and the board rendered on `/ceco` while signed in.

@@ -239,9 +239,9 @@ export default function GuidePage() {
           <StatusPill on={isCecoConfigured()} />
         </div>
         <p className="text-sm leading-6 text-muted">
-          The assistant keeps a read-only copy of what the CECO portal is: its areas, its pages, and
-          what shipped lately. No tickets, people, or customer data, and nothing here can change
-          anything in CECO.
+          The assistant keeps a read-only copy of what the CECO portal is: its areas, its pages,
+          what shipped lately, and your private initiatives board. No tickets, people, or customer
+          data, and nothing here can change anything in CECO.
         </p>
         <ul className="flex flex-col gap-3 text-sm leading-6">
           <li>
@@ -257,6 +257,12 @@ export default function GuidePage() {
             On the map, a page appears once one of your items is about it.{" "}
             <strong>Show the whole app</strong> draws all of it.
           </li>
+          <li>
+            <strong>Initiatives</strong> at the top of that tab is the board from
+            ceco.info/initiatives: what is active, blocked, or still an idea, how far through its
+            steps each one is, and what it is waiting on. Open one to read its steps and its log.
+            Checking a step off still happens in CECO.
+          </li>
         </ul>
         {!isCecoConfigured() && (
           <ol className="flex flex-col gap-3">
@@ -266,6 +272,10 @@ export default function GuidePage() {
             <Step n={2}>
               Here, set CECO_API_URL to the portal&apos;s address and CECO_API_TOKEN to the same
               string. Then open CECO from Today and sync.
+            </Step>
+            <Step n={3}>
+              For the initiatives board, also set ASSISTANT_INITIATIVES_BOARD in CECO to your own
+              address. Without it the pages still work; the board section just stays hidden.
             </Step>
           </ol>
         )}

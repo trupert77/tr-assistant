@@ -14,6 +14,8 @@ export type InboxStatus =
   | "processing"
   | "processed"
   | "needs_review"
+  /** Deleted from the inbox: kept, out of every list, restorable by Undo. */
+  | "discarded"
   | "failed";
 export type CaptureSource = "web" | "api" | "voice" | "share";
 export type Recurrence =

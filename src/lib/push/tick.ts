@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { indexPendingItems } from "@/lib/ai/embeddings";
 import { loadEvents } from "@/lib/calendar";
 import { classifyInboxItem } from "@/lib/capture/classify";
-import { syncCecoScopeIfStale } from "@/lib/ceco";
+import { syncCecoInitiativesIfStale, syncCecoScopeIfStale } from "@/lib/ceco";
 import { resolveAllowedUserId } from "@/lib/db/admin";
 import { formatDue, isoToZonedParts, localDayBounds } from "@/lib/dates";
 import type { Database } from "@/lib/db/types";
@@ -15,6 +15,8 @@ type Db = SupabaseClient<Database>;
 export type TickResult = {
   /** True when the CECO scope copy was refreshed on this run. */
   cecoSynced: boolean;
+  /** True when the CECO initiatives board copy was refreshed on this run. */
+  cecoInitiativesSynced: boolean;
   digests: number;
   reminders: number;
   classified: number;
@@ -36,7 +38,14 @@ const STUCK_CAPTURE_MS = 2 * 60_000;
  * on time.
  */
 export async function runTick(admin: Db, now: Date = new Date()): Promise<TickResult> {
-  const result: TickResult = { cecoSynced: false, digests: 0, reminders: 0, classified: 0, embedded: 0 };
+  const result: TickResult = {
+    cecoSynced: false,
+    cecoInitiativesSynced: false,
+    digests: 0,
+    reminders: 0,
+    classified: 0,
+    embedded: 0,
+  };
   const env = getServerEnv();
   const timeZone = env.APP_TIMEZONE;
 
@@ -49,8 +58,14 @@ export async function runTick(admin: Db, now: Date = new Date()): Promise<TickRe
   }
 
   // Before classifying anything, so a stuck capture sees the current page list.
+  // The board is refreshed on a shorter fuse than the scope — a step gets
+  // checked off mid-afternoon, where pages change when CECO deploys. Neither
+  // throws: a sync that fails leaves the last good copy alone.
   const owner = await resolveAllowedUserId(admin).catch(() => null);
-  if (owner) result.cecoSynced = await syncCecoScopeIfStale(admin, owner, now);
+  if (owner) {
+    result.cecoSynced = await syncCecoScopeIfStale(admin, owner, now);
+    result.cecoInitiativesSynced = await syncCecoInitiativesIfStale(admin, owner, now);
+  }
 
   // Fallback for captures whose after() run was cut short.
   const { data: stuck } = await admin

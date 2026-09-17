@@ -87,7 +87,7 @@ export default async function SettingsPage() {
           label="CECO portal"
           detail={
             isCecoConfigured()
-              ? "Read-only. Mirrors the portal's areas, pages, and What's New. Open CECO from Today to sync or browse."
+              ? "Read-only. Mirrors the portal's areas, pages, What's New, and the initiatives board. Open CECO from Today to sync or browse."
               : "Set CECO_API_URL and CECO_API_TOKEN, and ASSISTANT_API_TOKEN in CECO."
           }
         />

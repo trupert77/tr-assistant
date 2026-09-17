@@ -212,6 +212,15 @@ export function XIcon(p: IconProps) {
   );
 }
 
+export function TrashIcon(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M4 7h16M10 7V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2" />
+      <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" />
+    </svg>
+  );
+}
+
 export function CopyIcon(p: IconProps) {
   return (
     <svg {...base(p)}>

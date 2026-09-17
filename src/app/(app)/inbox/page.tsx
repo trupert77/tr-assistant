@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DiscardButton } from "@/components/discard-button";
 import { EmptyState } from "@/components/empty-state";
 import { ExampleCaptures } from "@/components/example-captures";
 import { CameraIcon, CheckIcon, FolderIcon, InboxIcon, SparklesIcon } from "@/components/icons";
@@ -6,6 +7,7 @@ import { KindLegend } from "@/components/kind-legend";
 import { SubmitChip } from "@/components/submit-chip";
 import { kindStyles, ui } from "@/components/ui";
 import { getAiProvider } from "@/lib/ai";
+import { deriveTitle } from "@/lib/capture";
 import { formatDue } from "@/lib/dates";
 import { createSupabaseServerClient } from "@/lib/db/server";
 import type { InboxItemRow, ItemKind, ItemRow } from "@/lib/db/types";
@@ -151,6 +153,8 @@ function InboxCard({
   aiEnabled: boolean;
 }) {
   const newProject = proposedProject(row, item);
+  // What the toast calls the capture after it is gone from the list.
+  const label = row.raw_text === PHOTO_ONLY_TEXT ? "Photo" : deriveTitle(row.raw_text);
   const meta = [
     formatRelative(row.created_at, timeZone),
     row.source !== "web" ? `via ${row.source}` : null,
@@ -258,6 +262,8 @@ function InboxCard({
                 </SubmitChip>
               ))}
             </form>
+
+            <DiscardButton inboxItemId={row.id} label={label} />
           </div>
         )}
       </div>

@@ -4,26 +4,42 @@ import { ArrowRightIcon, MapIcon } from "@/components/icons";
 import { ItemRow } from "@/components/item-row";
 import { SegmentNav } from "@/components/segment-nav";
 import { ui } from "@/components/ui";
-import { isCecoConfigured, loadCecoScope, type CecoPage, type CecoUpdate } from "@/lib/ceco";
+import { isCecoConfigured, loadCecoInitiatives, loadCecoScope, type CecoPage, type CecoUpdate } from "@/lib/ceco";
 import { createSupabaseServerClient } from "@/lib/db/server";
 import { getServerEnv } from "@/lib/env";
 import { formatRelative } from "@/lib/format";
 import { loadPeopleFor, loadProjectNames } from "@/lib/items/queries";
+import { InitiativeDetail, InitiativesSection } from "./initiatives";
 import { CecoSyncButton } from "./sync-button";
 
 /**
  * The CECO portal from the outside: every area and page it has, what shipped
- * to each lately, and which of Travis's own items are about it. The data is
- * the copy synced from CECO's read-only scope endpoint; nothing here reads or
- * changes CECO itself.
+ * to each lately, which of Travis's own items are about it, and the private
+ * initiatives board. All of it is the copy synced from CECO's read-only
+ * endpoints; nothing here reads or changes CECO itself.
  */
 export default async function CecoPage({ searchParams }: PageProps<"/ceco">) {
-  const { page } = await searchParams;
+  const { page, initiative } = await searchParams;
   const selectedPath = (Array.isArray(page) ? page[0] : page) || null;
+  const selectedInitiative = (Array.isArray(initiative) ? initiative[0] : initiative) || null;
 
   const db = await createSupabaseServerClient();
-  const stored = await loadCecoScope(db);
+  const [stored, storedBoard] = await Promise.all([loadCecoScope(db), loadCecoInitiatives(db)]);
   const timeZone = getServerEnv().APP_TIMEZONE;
+
+  if (storedBoard && selectedInitiative) {
+    const found = storedBoard.board.initiatives.find((i) => i.id === selectedInitiative);
+    if (found) {
+      return (
+        <InitiativeDetail
+          initiative={found}
+          board={storedBoard.board}
+          fetchedAt={storedBoard.fetchedAt}
+          timeZone={timeZone}
+        />
+      );
+    }
+  }
 
   if (!stored) {
     return (
@@ -97,6 +113,7 @@ export default async function CecoPage({ searchParams }: PageProps<"/ceco">) {
         <SegmentNav showCeco />
         <p className="text-sm text-muted">
           {scope.pages.length} pages in {scope.areas.length} areas, {scope.updates.length} updates in the last 90 days.
+          {storedBoard ? ` ${storedBoard.board.initiatives.length} initiatives on the board.` : ""}
           {totalOpen > 0 ? ` ${totalOpen} of your open items are about it.` : ""} Synced{" "}
           {formatRelative(fetchedAt, timeZone)}.
         </p>
@@ -108,6 +125,10 @@ export default async function CecoPage({ searchParams }: PageProps<"/ceco">) {
           </Link>
         </div>
       </div>
+
+      {/* The board first: it is what is being built, where the rest of the
+          page is what is already there. */}
+      {storedBoard && <InitiativesSection board={storedBoard.board} />}
 
       {scope.updates.length > 0 && (
         <section className="flex flex-col gap-3">

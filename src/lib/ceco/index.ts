@@ -1,9 +1,5 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
-import type { Database } from "@/lib/db/types";
-import { getServerEnv } from "@/lib/env";
-
-type Db = SupabaseClient<Database>;
+import { type Db, fetchCecoPayload, loadMirror, saveMirror, syncMirrorIfStale } from "./client";
 
 /**
  * The CECO portal (ceco.info), seen from outside. CECO is a separate app with
@@ -14,11 +10,16 @@ type Db = SupabaseClient<Database>;
  * records which pages an item is about.
  *
  * Read-only by design. Nothing here can change anything in CECO.
+ *
+ * The private initiatives board is a second endpoint and lives in
+ * `./initiatives`; the transport both share is in `./client`.
  */
+
+export { isCecoConfigured } from "./client";
+export * from "./initiatives";
 
 export const CECO_SOURCE = "ceco";
 
-const FETCH_TIMEOUT_MS = 10_000;
 /** The tick refreshes the copy when it is older than this. */
 const STALE_AFTER_MS = 6 * 3_600_000;
 
@@ -64,96 +65,31 @@ export type CecoUpdate = CecoScope["updates"][number];
 /** The newest scope shape this app understands. */
 const SUPPORTED_SCHEMA = 1;
 
-export function isCecoConfigured(): boolean {
-  const env = getServerEnv();
-  return Boolean(env.CECO_API_URL && env.CECO_API_TOKEN);
-}
-
 /** Ask CECO for its scope. Throws with a message fit to show in Settings. */
 export async function fetchCecoScope(): Promise<CecoScope> {
-  const env = getServerEnv();
-  if (!env.CECO_API_URL || !env.CECO_API_TOKEN) {
-    throw new Error("CECO_API_URL and CECO_API_TOKEN are not set.");
-  }
-
-  const url = new URL("/api/assistant/scope", env.CECO_API_URL);
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: { Authorization: `Bearer ${env.CECO_API_TOKEN}` },
-      cache: "no-store",
-      // Never followed. `fetch` strips Authorization across origins, so
-      // following a host redirect would drop the token and look like a wrong
-      // one; and a redirect to /login means the endpoint is not public yet.
-      // Both are worth telling apart, which happens below.
-      redirect: "manual",
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-  } catch {
-    throw new Error(`Could not reach ${url.host}.`);
-  }
-
-  if (response.status >= 300 && response.status < 400) {
-    const location = response.headers.get("location");
-    const target = location ? new URL(location, url) : null;
-    // Same path, different host: ceco.info sending us to www.ceco.info.
-    if (target && target.pathname === url.pathname) {
-      throw new Error(`CECO redirects to ${target.origin}. Set CECO_API_URL to exactly that.`);
-    }
-    throw new Error("CECO sent us to its login page. Deploy the /api/assistant/scope endpoint there first.");
-  }
-  if (response.status === 401) throw new Error("CECO rejected the token. CECO_API_TOKEN must match its ASSISTANT_API_TOKEN.");
-  if (response.status === 503) throw new Error("CECO has no ASSISTANT_API_TOKEN set, so its endpoint is off.");
-  if (!response.ok) throw new Error(`CECO answered ${response.status}.`);
-
-  const body: unknown = await response.json().catch(() => null);
-  const parsed = z.object({ ok: z.literal(true), scope: scopeSchema }).safeParse(body);
-  if (!parsed.success) throw new Error("CECO's answer was not in the expected shape.");
-  if (parsed.data.scope.schema > SUPPORTED_SCHEMA) {
-    throw new Error(`CECO sent scope schema ${parsed.data.scope.schema}; this app understands ${SUPPORTED_SCHEMA}.`);
-  }
-  return parsed.data.scope;
+  return fetchCecoPayload("/api/assistant/scope", "scope", scopeSchema, SUPPORTED_SCHEMA);
 }
 
 /** Fetch and store. `userId` is written explicitly so the service-role tick can call this too. */
 export async function syncCecoScope(db: Db, userId: string): Promise<CecoScope> {
   const scope = await fetchCecoScope();
-  const { error } = await db.from("external_scopes").upsert(
-    { user_id: userId, source: CECO_SOURCE, payload: scope, fetched_at: new Date().toISOString() },
-    { onConflict: "user_id,source" },
-  );
-  if (error) throw new Error(`Fetched the scope but could not save it: ${error.message}`);
+  await saveMirror(db, userId, CECO_SOURCE, scope);
   return scope;
 }
 
 /** For the tick: refresh only when the copy is missing or old. Never throws. */
 export async function syncCecoScopeIfStale(db: Db, userId: string, now: Date = new Date()): Promise<boolean> {
-  if (!isCecoConfigured()) return false;
-  try {
-    const { data } = await db
-      .from("external_scopes")
-      .select("fetched_at")
-      .eq("user_id", userId)
-      .eq("source", CECO_SOURCE)
-      .maybeSingle();
-    if (data && now.getTime() - new Date(data.fetched_at).getTime() < STALE_AFTER_MS) return false;
-    await syncCecoScope(db, userId);
-    return true;
-  } catch {
-    return false;
-  }
+  return syncMirrorIfStale(db, userId, CECO_SOURCE, STALE_AFTER_MS, syncCecoScope, now);
 }
 
 export type StoredCecoScope = { scope: CecoScope; fetchedAt: string };
 
 /** The last good copy, or null when there is none (not configured, never synced, migration not run). */
 export async function loadCecoScope(db: Db, userId?: string): Promise<StoredCecoScope | null> {
-  let query = db.from("external_scopes").select("payload, fetched_at").eq("source", CECO_SOURCE);
-  if (userId) query = query.eq("user_id", userId);
-  const { data } = await query.limit(1).maybeSingle();
-  if (!data) return null;
-  const parsed = scopeSchema.safeParse(data.payload);
-  return parsed.success ? { scope: parsed.data, fetchedAt: data.fetched_at } : null;
+  const stored = await loadMirror(db, CECO_SOURCE, userId);
+  if (!stored) return null;
+  const parsed = scopeSchema.safeParse(stored.payload);
+  return parsed.success ? { scope: parsed.data, fetchedAt: stored.fetchedAt } : null;
 }
 
 /** Attach an item to CECO pages. Paths that are not in the scope are dropped, so the model cannot invent one. */

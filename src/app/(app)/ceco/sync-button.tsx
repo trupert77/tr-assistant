@@ -3,9 +3,9 @@
 import { useState, useTransition } from "react";
 import { LoaderIcon, RepeatIcon } from "@/components/icons";
 import { ui } from "@/components/ui";
-import { syncCecoAction } from "./actions";
+import { type CecoActionResult, syncCecoAction } from "./actions";
 
-/** Refresh the mirrored CECO scope on demand. The tick also does this every few hours. */
+/** Refresh the mirrored CECO scope and initiatives board on demand. The tick also does this. */
 export function CecoSyncButton({ label = "Sync now" }: { label?: string }) {
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
@@ -20,7 +20,7 @@ export function CecoSyncButton({ label = "Sync now" }: { label?: string }) {
             const result = await syncCecoAction();
             setMessage(
               result.ok
-                ? { text: `Synced ${result.pages} pages from CECO ${result.version}.` }
+                ? { text: syncedText(result) }
                 : { text: result.error ?? "Could not sync.", error: true },
             );
           })
@@ -41,4 +41,15 @@ export function CecoSyncButton({ label = "Sync now" }: { label?: string }) {
       )}
     </div>
   );
+}
+
+/** One line for both halves of the sync, saying so when only the scope came through. */
+function syncedText(result: CecoActionResult): string {
+  const pages = `${result.pages} pages`;
+  const board =
+    result.initiatives === undefined
+      ? ""
+      : ` and ${result.initiatives} initiative${result.initiatives === 1 ? "" : "s"}`;
+  const synced = `Synced ${pages}${board} from CECO ${result.version}.`;
+  return result.initiativesNote ? `${synced} Initiatives: ${result.initiativesNote}` : synced;
 }
