@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { localDayBounds, shiftLocalDate, zonedToIso } from "@/lib/dates";
+import { loadGoalProgress } from "@/lib/links";
 import type { Database, ItemRow, PersonRole, PersonRow, ProjectRow, WorkspaceRow } from "@/lib/db/types";
 
 type Db = SupabaseClient<Database>;
@@ -165,6 +166,7 @@ export async function loadProjectSummaries(db: Db): Promise<ProjectSummary[]> {
 }
 
 export type ItemGroups = {
+  goals: ItemRow[];
   tasks: ItemRow[];
   waiting: ItemRow[];
   notes: ItemRow[];
@@ -172,9 +174,10 @@ export type ItemGroups = {
 };
 
 function groupItems(items: ItemRow[]): ItemGroups {
-  const g: ItemGroups = { tasks: [], waiting: [], notes: [], done: [] };
+  const g: ItemGroups = { goals: [], tasks: [], waiting: [], notes: [], done: [] };
   for (const i of items) {
     if (i.status === "done" || i.status === "archived") g.done.push(i);
+    else if (i.kind === "goal") g.goals.push(i);
     else if (i.kind === "note") g.notes.push(i);
     else if (i.kind === "followup") g.waiting.push(i);
     else g.tasks.push(i);
@@ -231,7 +234,7 @@ export async function loadPersonItems(
     .select("item_id, role")
     .eq("person_id", personId);
   if (!links?.length) {
-    return { waitingOn: [], other: { tasks: [], waiting: [], notes: [], done: [] } };
+    return { waitingOn: [], other: { goals: [], tasks: [], waiting: [], notes: [], done: [] } };
   }
   const { data: items } = await db
     .from("items")
@@ -247,4 +250,167 @@ export async function loadPersonItems(
   );
   const rest = (items ?? []).filter((i) => !waitingOn.includes(i));
   return { waitingOn, other: groupItems(rest) };
+}
+
+// ---------------------------------------------------------------------------
+// Someday, the weekly review, and focus
+// ---------------------------------------------------------------------------
+
+/** Every open item with no date, oldest first, so nothing undated can quietly vanish. */
+export async function loadSomeday(db: Db): Promise<{ groups: ItemGroups; meta: RowMeta }> {
+  const { data } = await db
+    .from("items")
+    .select()
+    .in("status", ["open", "waiting"])
+    .is("due_at", null)
+    .order("created_at");
+  const items = data ?? [];
+  return { groups: groupItems(items), meta: await loadRowMeta(db, items) };
+}
+
+/** People and project names for a set of rows, as `ItemRow` wants them. */
+export type RowMeta = {
+  people: Map<string, LinkedPerson[]>;
+  projects: Map<string, string>;
+};
+
+async function loadRowMeta(db: Db, items: ItemRow[]): Promise<RowMeta> {
+  const [people, projects] = await Promise.all([
+    loadPeopleFor(db, items.map((i) => i.id)),
+    loadProjectNames(db),
+  ]);
+  return { people, projects };
+}
+
+/** One step per open goal: the first unfinished one that nothing is blocking. */
+export type NextStep = { step: ItemRow; goalId: string; goalTitle: string; done: number; total: number };
+
+export async function loadNextSteps(db: Db): Promise<NextStep[]> {
+  const progress = await loadGoalProgress(db);
+  return progress
+    .filter((p) => p.next !== null)
+    .map((p) => ({
+      step: p.next!,
+      goalId: p.goal.id,
+      goalTitle: p.goal.title,
+      done: p.done,
+      total: p.total,
+    }));
+}
+
+/** Undated tasks older than this have been ignored long enough to need a decision. */
+const STALE_TASK_DAYS = 14;
+
+export type ReviewData = {
+  inboxCount: number;
+  overdue: ItemRow[];
+  /** Open tasks with no date that have sat for STALE_TASK_DAYS. */
+  staleTasks: ItemRow[];
+  /** Follow-ups still waiting with no future date, oldest first. */
+  waiting: ItemRow[];
+  /** Active projects with nothing open: finished, or missing a next step. */
+  quietProjects: Pick<ProjectRow, "id" | "name">[];
+  doneThisWeek: number;
+  meta: RowMeta;
+};
+
+/** One pass over everything that tends to slip, for the weekly review. */
+export async function loadReview(db: Db, timeZone: string, now: Date = new Date()): Promise<ReviewData> {
+  const { start } = localDayBounds(now, timeZone);
+  const staleBefore = new Date(now.getTime() - STALE_TASK_DAYS * 86_400_000).toISOString();
+  const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+
+  const [inbox, { data: overdue }, { data: staleTasks }, { data: waiting }, projects, done] =
+    await Promise.all([
+      db
+        .from("inbox_items")
+        .select("id", { count: "exact", head: true })
+        .in("status", ["pending", "needs_review", "failed"]),
+      db
+        .from("items")
+        .select()
+        .in("status", ["open", "waiting"])
+        .lt("due_at", start)
+        .order("due_at"),
+      db
+        .from("items")
+        .select()
+        .eq("kind", "task")
+        .eq("status", "open")
+        .is("due_at", null)
+        .lt("created_at", staleBefore)
+        .order("created_at"),
+      db
+        .from("items")
+        .select()
+        .eq("kind", "followup")
+        .eq("status", "waiting")
+        .or(`due_at.is.null,due_at.lt.${start}`)
+        .order("created_at"),
+      loadProjectSummaries(db),
+      db
+        .from("items")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "done")
+        .gte("completed_at", weekAgo),
+    ]);
+
+  // A follow-up that is overdue belongs in Overdue only.
+  const overdueIds = new Set((overdue ?? []).map((i) => i.id));
+  const waitingOnly = (waiting ?? []).filter((i) => !overdueIds.has(i.id));
+  const all = [...(overdue ?? []), ...(staleTasks ?? []), ...waitingOnly];
+
+  return {
+    inboxCount: inbox.count ?? 0,
+    overdue: overdue ?? [],
+    staleTasks: staleTasks ?? [],
+    waiting: waitingOnly,
+    quietProjects: projects.filter((p) => p.openCount === 0).map((p) => ({ id: p.id, name: p.name })),
+    doneThisWeek: done.count ?? 0,
+    meta: await loadRowMeta(db, all),
+  };
+}
+
+const FOCUS_COUNT = 3;
+const PRIORITY_RANK = { high: 0, normal: 1, low: 2 } as const;
+
+/**
+ * The few things that matter most right now: overdue and due today ranked by
+ * priority then time, topped up with undated high-priority tasks and then
+ * the next step of each goal. `hidden`
+ * is how much else is on the board, so focus never pretends it is all there is.
+ */
+export async function loadFocus(
+  db: Db,
+  timeZone: string,
+  now: Date = new Date(),
+): Promise<{ items: ItemRow[]; hidden: number; meta: RowMeta }> {
+  const { end } = localDayBounds(now, timeZone);
+  const [{ data: due }, { data: urgent }] = await Promise.all([
+    db
+      .from("items")
+      .select()
+      .in("status", ["open", "waiting"])
+      .lt("due_at", end)
+      .order("due_at"),
+    db
+      .from("items")
+      .select()
+      .eq("status", "open")
+      .eq("priority", "high")
+      .is("due_at", null)
+      .order("created_at"),
+  ]);
+
+  const ranked = [...(due ?? [])].sort(
+    (a, b) =>
+      (a.priority ? PRIORITY_RANK[a.priority] : 1) - (b.priority ? PRIORITY_RANK[b.priority] : 1) ||
+      a.due_at!.localeCompare(b.due_at!),
+  );
+  // Then the next move on each goal: undated, so nothing else would ever surface it.
+  const seen = new Set([...ranked, ...(urgent ?? [])].map((i) => i.id));
+  const goalSteps = (await loadNextSteps(db)).map((n) => n.step).filter((s) => !seen.has(s.id));
+  const pool = [...ranked, ...(urgent ?? []), ...goalSteps];
+  const items = pool.slice(0, FOCUS_COUNT);
+  return { items, hidden: pool.length - items.length, meta: await loadRowMeta(db, items) };
 }

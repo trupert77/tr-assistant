@@ -1,15 +1,25 @@
 import { timingSafeEqual } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { PHOTO_ONLY_TEXT } from "@/lib/ai/prompt";
 import { captureText } from "@/lib/capture";
-import type { Database } from "@/lib/db/types";
-import { getServerEnv, publicEnv } from "@/lib/env";
+import {
+  isCaptureImageType,
+  uploadCaptureImage,
+  type CaptureImageType,
+} from "@/lib/capture/attachments";
+import { classifyInboxItem } from "@/lib/capture/classify";
+import { createSupabaseAdminClient, resolveAllowedUserId } from "@/lib/db/admin";
+import { getServerEnv } from "@/lib/env";
 
 /**
  * POST /api/capture
  * Headers: Authorization: Bearer <CAPTURE_API_TOKEN>
- * Body:    { "text": "..." }
+ * Body, either:
+ *   JSON       { "text": "...", "image": "<base64>", "image_type": "image/jpeg" }
+ *   multipart  text=...  image=<file>
+ * `text` or `image` is required; both are fine. `source` may be "voice" or
+ * "share" so the inbox shows where it came from.
  *
  * For iOS Shortcuts and other clients that have no browser session. Enabled
  * only when CAPTURE_API_TOKEN and SUPABASE_SERVICE_ROLE_KEY are both set.
@@ -17,11 +27,12 @@ import { getServerEnv, publicEnv } from "@/lib/env";
  * resolved from ALLOWED_EMAIL and written explicitly.
  */
 
-const bodySchema = z.object({
-  text: z.string().trim().min(1).max(10_000),
+const fieldsSchema = z.object({
+  text: z.string().trim().max(10_000).default(""),
+  source: z.enum(["api", "voice", "share"]).catch("api"),
 });
 
-let cachedUserId: string | undefined;
+type Photo = { bytes: Uint8Array; type: CaptureImageType };
 
 function tokenMatches(header: string | null, expected: string): boolean {
   const provided = header?.replace(/^Bearer\s+/i, "") ?? "";
@@ -30,9 +41,45 @@ function tokenMatches(header: string | null, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** Pull text and an optional photo out of either body format. Null when malformed. */
+async function readBody(
+  request: NextRequest,
+): Promise<{ text: string; source: "api" | "voice" | "share"; photo: Photo | null } | null> {
+  const contentType = request.headers.get("content-type") ?? "";
+
+  if (contentType.includes("multipart/form-data")) {
+    const form = await request.formData().catch(() => null);
+    if (!form) return null;
+    const fields = fieldsSchema.safeParse({
+      text: form.get("text") ?? "",
+      source: form.get("source"),
+    });
+    if (!fields.success) return null;
+    const file = form.get("image");
+    const photo =
+      file instanceof File && file.size > 0 && isCaptureImageType(file.type)
+        ? { bytes: new Uint8Array(await file.arrayBuffer()), type: file.type }
+        : null;
+    return { ...fields.data, photo };
+  }
+
+  const json = await request.json().catch(() => null);
+  if (!json || typeof json !== "object") return null;
+  const fields = fieldsSchema.safeParse(json);
+  if (!fields.success) return null;
+  const { image, image_type } = json as { image?: unknown; image_type?: unknown };
+  const type = typeof image_type === "string" && isCaptureImageType(image_type) ? image_type : "image/jpeg";
+  const photo =
+    typeof image === "string" && image.length > 0
+      ? { bytes: new Uint8Array(Buffer.from(image.replace(/^data:[^,]+,/, ""), "base64")), type }
+      : null;
+  return { ...fields.data, photo };
+}
+
 export async function POST(request: NextRequest) {
   const env = getServerEnv();
-  if (!env.CAPTURE_API_TOKEN || !env.SUPABASE_SERVICE_ROLE_KEY) {
+  const admin = createSupabaseAdminClient();
+  if (!env.CAPTURE_API_TOKEN || !admin) {
     return NextResponse.json(
       { error: "Capture API is not configured." },
       { status: 503 },
@@ -43,38 +90,33 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
-  const parsed = bodySchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Body must be { text }." }, { status: 400 });
+  const body = await readBody(request);
+  if (!body || (!body.text && !body.photo)) {
+    return NextResponse.json({ error: "Body must include text or image." }, { status: 400 });
   }
 
-  const admin = createClient<Database>(
-    publicEnv.supabaseUrl,
-    env.SUPABASE_SERVICE_ROLE_KEY,
-    { auth: { persistSession: false, autoRefreshToken: false } },
-  );
-
-  if (!cachedUserId) {
-    const { data, error } = await admin.auth.admin.listUsers({ perPage: 50 });
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-    const target = env.ALLOWED_EMAIL.toLowerCase();
-    cachedUserId = data.users.find((u) => u.email?.toLowerCase() === target)?.id;
-    if (!cachedUserId) {
+  try {
+    const userId = await resolveAllowedUserId(admin);
+    if (!userId) {
       return NextResponse.json(
         { error: "Allowed user has not signed in yet." },
         { status: 409 },
       );
     }
-  }
 
-  try {
+    const attachmentPath = body.photo
+      ? await uploadCaptureImage(admin, userId, body.photo.bytes, body.photo.type)
+      : null;
     const row = await captureText(admin, {
-      text: parsed.data.text,
-      source: "api",
-      userId: cachedUserId,
+      text: body.text || PHOTO_ONLY_TEXT,
+      source: body.source,
+      userId,
+      attachmentPath,
     });
+
+    // File it after the response, the same way the capture bar does.
+    after(() => classifyInboxItem(admin, row.id));
+
     return NextResponse.json({ id: row.id }, { status: 201 });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not save.";

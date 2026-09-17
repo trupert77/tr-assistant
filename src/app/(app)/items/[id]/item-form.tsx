@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { ui } from "@/components/ui";
 import type { ItemRow } from "@/lib/db/types";
 import type { ItemOptions } from "@/lib/items/queries";
+import { RECURRENCE_LABELS } from "@/lib/items/recurrence";
 import { updateItemAction, type UpdateState } from "../actions";
 
 const label = "text-[11px] font-semibold uppercase tracking-wider text-muted";
@@ -46,6 +47,7 @@ export function ItemForm({
             <option value="task">Task</option>
             <option value="followup">Follow-up</option>
             <option value="note">Note</option>
+            <option value="goal">Goal</option>
           </select>
         </Field>
         <Field id="status" text="Status">
@@ -66,6 +68,22 @@ export function ItemForm({
           <input id="due_time" name="due_time" type="time" defaultValue={dueTime} className={ui.input} />
         </Field>
       </div>
+
+      <Field id="recurrence" text="Repeats">
+        <select
+          id="recurrence"
+          name="recurrence"
+          defaultValue={item.recurrence ?? ""}
+          className={select}
+        >
+          <option value="">Never</option>
+          {Object.entries(RECURRENCE_LABELS).map(([value, text]) => (
+            <option key={value} value={value}>
+              {text}
+            </option>
+          ))}
+        </select>
+      </Field>
 
       <div className="grid grid-cols-2 gap-3">
         <Field id="workspace_id" text="Workspace">

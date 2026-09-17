@@ -3,11 +3,17 @@ import { redirect } from "next/navigation";
 import { BottomNav } from "@/components/bottom-nav";
 import { CaptureBar } from "@/components/capture-bar";
 import { HelpIcon, LogoMark, SettingsIcon } from "@/components/icons";
+import { Toaster } from "@/components/toast";
+import { aiProviderOptions, resolveAiProviderName } from "@/lib/ai";
+import { aiPreferenceOf } from "@/lib/ai/preference";
 import { getCurrentUser } from "@/lib/db/server";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+
+  const aiProviders = aiProviderOptions();
+  const aiProvider = resolveAiProviderName(aiPreferenceOf(user));
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -41,9 +47,10 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         </div>
       </header>
       <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-8 px-4 pb-36 pt-2">
-        <CaptureBar />
+        <CaptureBar aiProviders={aiProviders} aiProvider={aiProvider} />
         {children}
       </main>
+      <Toaster />
       <BottomNav />
     </div>
   );

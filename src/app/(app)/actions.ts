@@ -3,9 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { z } from "zod";
+import { PHOTO_ONLY_TEXT } from "@/lib/ai/prompt";
 import { captureText, promoteInboxItem } from "@/lib/capture";
+import { isCaptureImageType, uploadCaptureImage } from "@/lib/capture/attachments";
 import { classifyInboxItem } from "@/lib/capture/classify";
-import { createSupabaseServerClient } from "@/lib/db/server";
+import { createSupabaseServerClient, getCurrentUser } from "@/lib/db/server";
 
 export type CaptureState = {
   ok?: boolean;
@@ -15,27 +17,47 @@ export type CaptureState = {
 };
 
 const captureSchema = z.object({
-  text: z.string().trim().min(1, "Type something first.").max(10_000),
+  text: z.string().trim().max(10_000),
+  // "voice" when the text was dictated with the mic, "share" from the share sheet.
+  source: z.enum(["web", "voice", "share"]).catch("web"),
 });
 
 function refresh() {
-  revalidatePath("/inbox");
-  revalidatePath("/");
+  revalidatePath("/", "layout");
 }
 
 export async function captureAction(
   _prev: CaptureState,
   formData: FormData,
 ): Promise<CaptureState> {
-  const parsed = captureSchema.safeParse({ text: formData.get("text") });
+  const parsed = captureSchema.safeParse({
+    text: formData.get("text") ?? "",
+    source: formData.get("source"),
+  });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  const image = formData.get("image");
+  const photo = image instanceof File && image.size > 0 ? image : null;
+  if (!parsed.data.text && !photo) return { error: "Type something first." };
+  if (photo && !isCaptureImageType(photo.type)) {
+    return { error: "Photos need to be JPEG, PNG, or WebP." };
   }
 
   let inboxId: string;
   const db = await createSupabaseServerClient();
   try {
-    const row = await captureText(db, { text: parsed.data.text, source: "web" });
+    let attachmentPath: string | null = null;
+    if (photo && isCaptureImageType(photo.type)) {
+      const user = await getCurrentUser();
+      if (!user) return { error: "Sign in again to add a photo." };
+      attachmentPath = await uploadCaptureImage(db, user.id, await photo.arrayBuffer(), photo.type);
+    }
+    const row = await captureText(db, {
+      text: parsed.data.text || PHOTO_ONLY_TEXT,
+      source: parsed.data.source,
+      attachmentPath,
+    });
     inboxId = row.id;
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Could not save." };
@@ -52,7 +74,7 @@ export async function captureAction(
 const idSchema = z.object({ inboxItemId: z.uuid() });
 
 const promoteSchema = idSchema.extend({
-  kind: z.enum(["task", "followup", "note"]),
+  kind: z.enum(["task", "followup", "note", "goal"]),
 });
 
 /** Manual filing, or re-filing after the AI picked a different kind. */

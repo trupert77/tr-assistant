@@ -2,8 +2,9 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { publicEnv } from "@/lib/env";
 
-// /api/capture authenticates with its own bearer token, not a session.
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/api/capture"];
+// /api/capture and /api/cron authenticate with their own bearer tokens, not a
+// session. The service worker is fetched by the browser on its own schedule.
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/api/capture", "/api/cron", "/sw.js"];
 
 /**
  * Runs before every matched request. Refreshes the Supabase session cookie

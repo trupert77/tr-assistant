@@ -7,9 +7,16 @@ export type {
   AiProvider,
   AnswerContext,
   AnswerResult,
+  AnswerTurn,
+  AssistantAction,
   Classification,
   ClassifyContext,
+  ClassifyImage,
+  ContextEvent,
   ContextItem,
+  NudgeInput,
+  PlanInput,
+  PlanStep,
 } from "./types";
 
 export type AiProviderName = "anthropic" | "openai";
@@ -30,6 +37,23 @@ export function isAiProviderConfigured(name: AiProviderName): boolean {
   return Boolean(name === "anthropic" ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY);
 }
 
+/** One choice in the Claude / ChatGPT switch. */
+export type AiProviderOption = {
+  name: AiProviderName;
+  label: string;
+  model: string;
+  configured: boolean;
+};
+
+export function aiProviderOptions(): AiProviderOption[] {
+  return AI_PROVIDERS.map((p) => ({
+    name: p.name,
+    label: p.label,
+    model: p.defaultModel,
+    configured: isAiProviderConfigured(p.name),
+  }));
+}
+
 export function configuredAiProviders(): AiProviderName[] {
   return AI_PROVIDERS.map((p) => p.name).filter(isAiProviderConfigured);
 }
@@ -42,6 +66,11 @@ export function defaultAiProviderName(): AiProviderName | null {
   const env = getServerEnv();
   if (env.AI_PROVIDER && isAiProviderConfigured(env.AI_PROVIDER)) return env.AI_PROVIDER;
   return configuredAiProviders()[0] ?? null;
+}
+
+/** The provider name `getAiProvider(preferred)` will use, for showing the active choice. */
+export function resolveAiProviderName(preferred?: AiProviderName | null): AiProviderName | null {
+  return preferred && isAiProviderConfigured(preferred) ? preferred : defaultAiProviderName();
 }
 
 const cache = new Map<AiProviderName, AiProvider>();
@@ -68,8 +97,7 @@ function build(name: AiProviderName): AiProvider {
  * its key is configured; otherwise the env default is used.
  */
 export function getAiProvider(preferred?: AiProviderName | null): AiProvider | null {
-  const name =
-    preferred && isAiProviderConfigured(preferred) ? preferred : defaultAiProviderName();
+  const name = resolveAiProviderName(preferred);
   if (!name) return null;
 
   let provider = cache.get(name);

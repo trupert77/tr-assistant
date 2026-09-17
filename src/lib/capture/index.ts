@@ -8,6 +8,7 @@ import type {
   ItemPriority,
   ItemRow,
   PersonRole,
+  Recurrence,
 } from "@/lib/db/types";
 
 type Db = SupabaseClient<Database>;
@@ -20,7 +21,13 @@ const TITLE_MAX = 100;
  */
 export async function captureText(
   db: Db,
-  input: { text: string; source: CaptureSource; userId?: string },
+  input: {
+    text: string;
+    source: CaptureSource;
+    userId?: string;
+    /** Storage path of an attached photo, already uploaded. */
+    attachmentPath?: string | null;
+  },
 ): Promise<InboxItemRow> {
   const raw_text = input.text.trim();
   if (!raw_text) throw new Error("Nothing to capture.");
@@ -31,6 +38,7 @@ export async function captureText(
       raw_text,
       source: input.source,
       ...(input.userId ? { user_id: input.userId } : {}),
+      ...(input.attachmentPath ? { attachment_path: input.attachmentPath } : {}),
     })
     .select()
     .single();
@@ -53,6 +61,7 @@ export type PromoteFields = {
   body?: string | null;
   priority?: ItemPriority | null;
   due_at?: string | null;
+  recurrence?: Recurrence | null;
   workspace_id?: string | null;
   project_id?: string | null;
   category?: string | null;
@@ -90,12 +99,16 @@ export async function promoteInboxItem(db: Db, input: PromoteInput): Promise<Ite
   const fallbackTitle = deriveTitle(raw);
   const fields = input.fields ?? {};
 
-  const { data: existing } = await db
-    .from("items")
-    .select()
-    .eq("inbox_item_id", inbox.id)
-    .limit(1)
-    .maybeSingle();
+  // A capture can split into several items; the inbox row points at the first.
+  const { data: existing } = inbox.item_id
+    ? await db.from("items").select().eq("id", inbox.item_id).maybeSingle()
+    : await db
+        .from("items")
+        .select()
+        .eq("inbox_item_id", inbox.id)
+        .order("created_at")
+        .limit(1)
+        .maybeSingle();
 
   let item: ItemRow;
 
@@ -111,7 +124,8 @@ export async function promoteInboxItem(db: Db, input: PromoteInput): Promise<Ite
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.body !== undefined ? { body: fields.body } : {}),
         ...(fields.priority !== undefined ? { priority: fields.priority } : {}),
-        ...(fields.due_at !== undefined ? { due_at: fields.due_at } : {}),
+        ...(fields.due_at !== undefined ? { due_at: fields.due_at, reminded_at: null } : {}),
+        ...(fields.recurrence !== undefined ? { recurrence: fields.recurrence } : {}),
         ...(fields.workspace_id !== undefined ? { workspace_id: fields.workspace_id } : {}),
         ...(fields.project_id !== undefined ? { project_id: fields.project_id } : {}),
         ...(fields.category !== undefined ? { category: fields.category } : {}),
@@ -126,30 +140,11 @@ export async function promoteInboxItem(db: Db, input: PromoteInput): Promise<Ite
     const title = fields.title ?? fallbackTitle;
     const body =
       fields.body !== undefined ? fields.body : raw === title ? null : raw;
-    const { data, error } = await db
-      .from("items")
-      .insert({
-        kind: input.kind,
-        title,
-        body,
-        source_text: inbox.raw_text,
-        status: defaultStatus(input.kind),
-        priority: fields.priority ?? null,
-        due_at: fields.due_at ?? null,
-        workspace_id: fields.workspace_id ?? null,
-        project_id: fields.project_id ?? null,
-        category: fields.category ?? null,
-        tags: fields.tags ?? [],
-        inbox_item_id: inbox.id,
-      })
-      .select()
-      .single();
-    if (error || !data) throw new Error(`Could not create item: ${error?.message}`);
-    item = data;
+    item = await insertItem(db, inbox, input.kind, { ...fields, title, body });
   }
 
   if (input.people?.length) {
-    await linkPeople(db, item.id, input.people);
+    await linkPeople(db, inbox.user_id, item.id, input.people);
   }
 
   const { error: updateError } = await db
@@ -167,20 +162,90 @@ export async function promoteInboxItem(db: Db, input: PromoteInput): Promise<Ite
   return item;
 }
 
+/**
+ * The one place an item row is born from an inbox row. `user_id` is always
+ * written, so this works for the service-role client (capture API, cron)
+ * as well as a signed-in session.
+ */
+async function insertItem(
+  db: Db,
+  inbox: InboxItemRow,
+  kind: ItemKind,
+  fields: PromoteFields & { title: string },
+): Promise<ItemRow> {
+  const { data, error } = await db
+    .from("items")
+    .insert({
+      user_id: inbox.user_id,
+      kind,
+      title: fields.title,
+      body: fields.body ?? null,
+      source_text: inbox.raw_text,
+      status: defaultStatus(kind),
+      priority: fields.priority ?? null,
+      due_at: fields.due_at ?? null,
+      workspace_id: fields.workspace_id ?? null,
+      project_id: fields.project_id ?? null,
+      category: fields.category ?? null,
+      tags: fields.tags ?? [],
+      inbox_item_id: inbox.id,
+      // Only sent when set, so captures keep working before the Phase 8 migration runs.
+      ...(fields.recurrence ? { recurrence: fields.recurrence } : {}),
+      ...(inbox.attachment_path ? { attachment_path: inbox.attachment_path } : {}),
+    })
+    .select()
+    .single();
+  if (error || !data) throw new Error(`Could not create item: ${error?.message}`);
+  return data;
+}
+
+/**
+ * The second and later items of a capture that split into several. Skips a
+ * title this inbox row already produced, so retrying a failed run is safe.
+ */
+export async function addItemFromInbox(
+  db: Db,
+  inbox: InboxItemRow,
+  input: {
+    kind: ItemKind;
+    fields: PromoteFields & { title: string };
+    people?: { name: string; role: PersonRole }[];
+  },
+): Promise<ItemRow> {
+  const { data: same } = await db
+    .from("items")
+    .select()
+    .eq("inbox_item_id", inbox.id)
+    .eq("title", input.fields.title)
+    .limit(1)
+    .maybeSingle();
+  if (same) return same;
+
+  const item = await insertItem(db, inbox, input.kind, input.fields);
+  if (input.people?.length) {
+    await linkPeople(db, inbox.user_id, item.id, input.people);
+  }
+  return item;
+}
+
 /** Find-or-create each person by name (or alias) and link them to the item. */
 async function linkPeople(
   db: Db,
+  userId: string,
   itemId: string,
   people: { name: string; role: PersonRole }[],
 ): Promise<void> {
-  const { data: known } = await db.from("people").select("id, name, aliases");
+  const { data: known } = await db
+    .from("people")
+    .select("id, name, aliases")
+    .eq("user_id", userId);
   const byName = new Map<string, string>();
   for (const p of known ?? []) {
     byName.set(p.name.toLowerCase(), p.id);
     for (const a of p.aliases) byName.set(a.toLowerCase(), p.id);
   }
 
-  const links: { item_id: string; person_id: string; role: PersonRole }[] = [];
+  const links: { user_id: string; item_id: string; person_id: string; role: PersonRole }[] = [];
   for (const person of people) {
     const name = person.name.trim();
     if (!name) continue;
@@ -188,14 +253,14 @@ async function linkPeople(
     if (!id) {
       const { data, error } = await db
         .from("people")
-        .insert({ name })
+        .insert({ name, user_id: userId })
         .select("id")
         .single();
       if (error || !data) continue;
       id = data.id;
       byName.set(name.toLowerCase(), id);
     }
-    links.push({ item_id: itemId, person_id: id, role: person.role });
+    links.push({ user_id: userId, item_id: itemId, person_id: id, role: person.role });
   }
 
   if (links.length) {

@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AnswerContext, ContextItem } from "@/lib/ai";
+import { semanticMatches } from "@/lib/ai/embeddings";
+import { loadEvents } from "@/lib/calendar";
+import { loadCecoPagesFor, loadCecoScope } from "@/lib/ceco";
+import { localDayBounds, shiftLocalDate, zonedToIso } from "@/lib/dates";
 import type { Database, ItemRow } from "@/lib/db/types";
 import { loadPeopleFor, loadProjectNames } from "@/lib/items/queries";
 
@@ -48,12 +52,32 @@ export async function searchItems(db: Db, text: string, limit = 30): Promise<Ite
   return data ?? [];
 }
 
+/**
+ * Keyword hits first, then items that are close in meaning but share no
+ * words with the query ("network slow" finds "Kalamazoo switch flaky").
+ * Falls back to keyword-only when embeddings are not configured.
+ */
+export async function hybridSearch(db: Db, text: string, limit = 30): Promise<ItemRow[]> {
+  const [keyword, semantic] = await Promise.all([
+    searchItems(db, text, limit),
+    semanticMatches(db, text, limit),
+  ]);
+  const seen = new Set(keyword.map((i) => i.id));
+  const extraIds = semantic.map((m) => m.id).filter((id) => !seen.has(id));
+  if (!extraIds.length) return keyword;
+
+  const { data } = await db.from("items").select().in("id", extraIds).neq("status", "archived");
+  const byId = new Map((data ?? []).map((i) => [i.id, i]));
+  const extras = extraIds.map((id) => byId.get(id)).filter((i): i is ItemRow => Boolean(i));
+  return [...keyword, ...extras].slice(0, limit);
+}
+
 const OPEN_CAP = 300;
 const HIT_CAP = 40;
 
 export type Retrieved = {
   ctx: AnswerContext;
-  /** Full-text hits for the question, for the "Matches" list. */
+  /** Keyword and semantic hits for the question, for the "Matches" list. */
   hits: ItemRow[];
   /** Every item in the context, by id, so cited ids can be rendered. */
   byId: Map<string, ItemRow>;
@@ -62,8 +86,9 @@ export type Retrieved = {
 };
 
 /**
- * Build what the model sees: every open item (capped) plus full-text hits
- * for the question across all statuses, so "what did I say about X" can
+ * Build what the model sees: today's and tomorrow's calendar, every open
+ * item (capped), plus keyword and semantic hits for the question across all
+ * statuses, so "what did I say about X" can
  * reach notes and finished items. At personal scale this fits comfortably.
  */
 export async function retrieveForQuestion(
@@ -72,7 +97,10 @@ export async function retrieveForQuestion(
   timeZone: string,
   now: Date = new Date(),
 ): Promise<Retrieved> {
-  const [{ data: open }, hits] = await Promise.all([
+  const { today, start } = localDayBounds(now, timeZone);
+  const dayAfterTomorrow = zonedToIso(shiftLocalDate(today, 2), "00:00", timeZone)!;
+
+  const [{ data: open }, hits, events] = await Promise.all([
     db
       .from("items")
       .select()
@@ -80,7 +108,8 @@ export async function retrieveForQuestion(
       .order("due_at", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false })
       .limit(OPEN_CAP + 1),
-    searchItems(db, question, HIT_CAP),
+    hybridSearch(db, question, HIT_CAP),
+    loadEvents(new Date(start), new Date(dayAfterTomorrow), timeZone),
   ]);
 
   const truncated = (open?.length ?? 0) > OPEN_CAP;
@@ -89,9 +118,11 @@ export async function retrieveForQuestion(
   for (const i of hits) byId.set(i.id, i);
 
   const ids = [...byId.keys()];
-  const [people, projects] = await Promise.all([
+  const [people, projects, cecoPages, ceco] = await Promise.all([
     loadPeopleFor(db, ids),
     loadProjectNames(db),
+    loadCecoPagesFor(db, ids),
+    loadCecoScope(db),
   ]);
 
   const items: ContextItem[] = ids.map((id) => {
@@ -104,16 +135,27 @@ export async function retrieveForQuestion(
       body: i.body,
       priority: i.priority,
       due_at: i.due_at,
+      recurrence: i.recurrence,
       category: i.category,
       tags: i.tags,
       project: i.project_id ? projects.get(i.project_id) ?? null : null,
       people: (people.get(i.id) ?? []).map((p) => ({ name: p.name, role: p.role })),
+      cecoPages: cecoPages.get(i.id) ?? [],
       created_at: i.created_at,
     };
   });
 
   return {
-    ctx: { now, timeZone, items, truncated },
+    ctx: {
+      now,
+      timeZone,
+      items,
+      truncated,
+      events,
+      cecoUpdates: (ceco?.scope.updates ?? [])
+        .slice(0, 12)
+        .map((u) => ({ date: u.date, title: u.title, pages: u.pages })),
+    },
     hits,
     byId,
     people,
