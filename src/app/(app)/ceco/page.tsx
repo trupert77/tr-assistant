@@ -2,6 +2,7 @@ import Link from "next/link";
 import { EmptyState } from "@/components/empty-state";
 import { ArrowRightIcon, MapIcon } from "@/components/icons";
 import { ItemRow } from "@/components/item-row";
+import { SegmentNav } from "@/components/segment-nav";
 import { ui } from "@/components/ui";
 import { isCecoConfigured, loadCecoScope, type CecoPage, type CecoUpdate } from "@/lib/ceco";
 import { createSupabaseServerClient } from "@/lib/db/server";
@@ -28,6 +29,7 @@ export default async function CecoPage({ searchParams }: PageProps<"/ceco">) {
     return (
       <div className="flex flex-col gap-6">
         <h1 className={ui.pageTitle}>CECO</h1>
+        <SegmentNav showCeco />
         <EmptyState title={isCecoConfigured() ? "Not synced yet" : "Not connected"}>
           {isCecoConfigured()
             ? "The connection is set up. Pull the first copy of CECO's pages and areas."
@@ -84,7 +86,7 @@ export default async function CecoPage({ searchParams }: PageProps<"/ceco">) {
 
   return (
     <div className="flex flex-col gap-7">
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         <div className="flex items-baseline justify-between gap-3">
           <h1 className={ui.pageTitle}>CECO</h1>
           <span className="text-xs text-faint">
@@ -92,6 +94,7 @@ export default async function CecoPage({ searchParams }: PageProps<"/ceco">) {
             {scope.app.commit ? ` · ${scope.app.commit}` : ""}
           </span>
         </div>
+        <SegmentNav showCeco />
         <p className="text-sm text-muted">
           {scope.pages.length} pages in {scope.areas.length} areas, {scope.updates.length} updates in the last 90 days.
           {totalOpen > 0 ? ` ${totalOpen} of your open items are about it.` : ""} Synced{" "}

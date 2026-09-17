@@ -2,11 +2,10 @@ import Link from "next/link";
 import { EmptyState } from "@/components/empty-state";
 import { CompleteButton } from "@/components/complete-button";
 import { ExampleCaptures } from "@/components/example-captures";
-import { CloudIcon, FlagIcon, FolderIcon, ListCheckIcon, SunIcon, TargetIcon } from "@/components/icons";
+import { CloudIcon, FlagIcon, ListCheckIcon, SunIcon, TargetIcon } from "@/components/icons";
 import { ItemRow } from "@/components/item-row";
 import { ui } from "@/components/ui";
 import { loadEvents, type CalendarEvent } from "@/lib/calendar";
-import { isCecoConfigured } from "@/lib/ceco";
 import { localDayBounds } from "@/lib/dates";
 import { createSupabaseServerClient, getCurrentUser } from "@/lib/db/server";
 import type { ItemRow as Item } from "@/lib/db/types";
@@ -72,12 +71,6 @@ export default async function TodayPage() {
           <ListCheckIcon size={15} />
           {reviewDue ? "Review due" : "Review"}
         </Link>
-        {isCecoConfigured() && (
-          <Link href="/ceco" className={quickLink}>
-            <FolderIcon size={15} />
-            CECO
-          </Link>
-        )}
       </nav>
 
       <Calendar events={events} timeZone={timeZone} now={now} />

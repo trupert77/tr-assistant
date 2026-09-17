@@ -250,7 +250,7 @@ export default function GuidePage() {
             <strong>CECO pages</strong> on the item.
           </li>
           <li>
-            The <strong>CECO</strong> chip on Today opens the whole scope: every page by area, what
+            The <strong>CECO</strong> tab, next to Projects and People, opens the whole scope: every page by area, what
             you have open against it, and when it last shipped.
           </li>
           <li>

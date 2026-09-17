@@ -2,6 +2,7 @@ import Link from "next/link";
 import { EmptyState } from "@/components/empty-state";
 import { ArrowRightIcon } from "@/components/icons";
 import { SegmentNav } from "@/components/segment-nav";
+import { isCecoConfigured } from "@/lib/ceco";
 import { ui } from "@/components/ui";
 import { createSupabaseServerClient } from "@/lib/db/server";
 import { loadPeopleSummaries } from "@/lib/items/queries";
@@ -19,7 +20,7 @@ export default async function PeoplePage() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
         <h1 className={ui.pageTitle}>People</h1>
-        <SegmentNav />
+        <SegmentNav showCeco={isCecoConfigured()} />
       </div>
 
       {sorted.length === 0 ? (

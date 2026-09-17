@@ -1,15 +1,24 @@
 "use client";
 
+import type { Route } from "next";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-/** Two-way switch between Projects and People, shown at the top of both. */
-export function SegmentNav() {
+/**
+ * Switch between the things you browse rather than do: your projects, the
+ * people they involve, and the CECO portal. Shown at the top of each.
+ */
+export function SegmentNav({ showCeco = false }: { showCeco?: boolean }) {
   const pathname = usePathname();
-  const segments = [
+  const onCeco = pathname.startsWith("/ceco");
+  // Annotated rather than `as const`: the conditional spread would otherwise
+  // widen href to string and fail the typed-routes check.
+  const segments: { href: Route; label: string }[] = [
     { href: "/projects", label: "Projects" },
     { href: "/people", label: "People" },
-  ] as const;
+    // Hidden until the portal is connected, but never hidden while you are on it.
+    ...(showCeco || onCeco ? [{ href: "/ceco" as Route, label: "CECO" }] : []),
+  ];
 
   return (
     <nav aria-label="Browse" className="inline-flex rounded-full border border-line bg-surface-2/60 p-1">
