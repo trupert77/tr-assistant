@@ -1,5 +1,9 @@
 -- Phase 8: notifications, recurrence, attachments, semantic search.
--- Safe to run once on top of 20260916000000_init.sql.
+-- Runs on top of 20260916000000_init.sql.
+--
+-- Written to be safe to run again: every statement either uses IF NOT EXISTS
+-- or drops what it is about to create. A part-applied run is fixed by simply
+-- running the whole file once more.
 
 -- ---------------------------------------------------------------------------
 -- Recurring items. Completing one spawns the next; `recurred_from` makes the
@@ -7,11 +11,15 @@
 -- ---------------------------------------------------------------------------
 
 alter table public.items
-  add column recurrence text
-    check (recurrence in ('daily', 'weekdays', 'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly')),
-  add column recurred_from uuid references public.items (id) on delete set null;
+  add column if not exists recurrence text,
+  add column if not exists recurred_from uuid references public.items (id) on delete set null;
 
-create unique index items_recurred_from_key
+alter table public.items drop constraint if exists items_recurrence_check;
+alter table public.items
+  add constraint items_recurrence_check
+  check (recurrence in ('daily', 'weekdays', 'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'));
+
+create unique index if not exists items_recurred_from_key
   on public.items (recurred_from) where recurred_from is not null;
 
 -- ---------------------------------------------------------------------------
@@ -19,17 +27,17 @@ create unique index items_recurred_from_key
 -- Cleared by the app whenever due_at changes.
 -- ---------------------------------------------------------------------------
 
-alter table public.items add column reminded_at timestamptz;
+alter table public.items add column if not exists reminded_at timestamptz;
 
 -- ---------------------------------------------------------------------------
 -- Photo captures. The file lives in the private `captures` bucket under
--- <user id>/<inbox item id>.jpg; both rows keep the path.
+-- <user id>/<uuid>.jpg; both rows keep the path.
 -- ---------------------------------------------------------------------------
 
-alter table public.inbox_items add column attachment_path text;
-alter table public.items       add column attachment_path text;
+alter table public.inbox_items add column if not exists attachment_path text;
+alter table public.items       add column if not exists attachment_path text;
 
-alter table public.inbox_items drop constraint inbox_items_source_check;
+alter table public.inbox_items drop constraint if exists inbox_items_source_check;
 alter table public.inbox_items
   add constraint inbox_items_source_check
   check (source in ('web', 'api', 'voice', 'share'));
@@ -38,14 +46,17 @@ insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_typ
 values ('captures', 'captures', false, 5242880, array['image/jpeg', 'image/png', 'image/webp'])
 on conflict (id) do nothing;
 
+drop policy if exists captures_owner_select on storage.objects;
 create policy captures_owner_select on storage.objects
   for select to authenticated
   using (bucket_id = 'captures' and (storage.foldername(name))[1] = auth.uid()::text);
 
+drop policy if exists captures_owner_insert on storage.objects;
 create policy captures_owner_insert on storage.objects
   for insert to authenticated
   with check (bucket_id = 'captures' and (storage.foldername(name))[1] = auth.uid()::text);
 
+drop policy if exists captures_owner_update on storage.objects;
 create policy captures_owner_update on storage.objects
   for update to authenticated
   using (bucket_id = 'captures' and (storage.foldername(name))[1] = auth.uid()::text);
@@ -54,7 +65,7 @@ create policy captures_owner_update on storage.objects
 -- Web push subscriptions, one per installed device.
 -- ---------------------------------------------------------------------------
 
-create table public.push_subscriptions (
+create table if not exists public.push_subscriptions (
   id               uuid primary key default gen_random_uuid(),
   user_id          uuid not null default auth.uid() references auth.users (id) on delete cascade,
   endpoint         text not null unique,
@@ -67,7 +78,7 @@ create table public.push_subscriptions (
 
 -- One row per (user, kind, local day). The unique key is the lock: whichever
 -- cron run inserts first sends the digest, every other run that day skips.
-create table public.notification_log (
+create table if not exists public.notification_log (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
   kind        text not null,
@@ -84,11 +95,11 @@ create table public.notification_log (
 create extension if not exists vector with schema extensions;
 
 alter table public.items
-  add column content_hash text generated always as (
+  add column if not exists content_hash text generated always as (
     md5(coalesce(title, '') || chr(10) || coalesce(body, '') || chr(10) || coalesce(source_text, ''))
   ) stored;
 
-create table public.item_embeddings (
+create table if not exists public.item_embeddings (
   item_id       uuid primary key references public.items (id) on delete cascade,
   user_id       uuid not null default auth.uid() references auth.users (id) on delete cascade,
   content_hash  text not null,
@@ -96,7 +107,7 @@ create table public.item_embeddings (
   updated_at    timestamptz not null default now()
 );
 
-create index item_embeddings_hnsw_idx
+create index if not exists item_embeddings_hnsw_idx
   on public.item_embeddings using hnsw (embedding extensions.vector_cosine_ops);
 
 -- Items whose embedding is missing or out of date, oldest first.
@@ -148,6 +159,7 @@ begin
   foreach t in array array['push_subscriptions', 'notification_log', 'item_embeddings']
   loop
     execute format('alter table public.%I enable row level security', t);
+    execute format('drop policy if exists %I on public.%I', t || '_owner', t);
     execute format(
       'create policy %I on public.%I for all to authenticated
          using (user_id = auth.uid()) with check (user_id = auth.uid())',

@@ -1,12 +1,16 @@
 -- Phase 9: goals, links between items, and the map.
 -- Run after 20260917000000_brain.sql (related_items reads item_embeddings).
+--
+-- Written to be safe to run again: every statement either uses IF NOT EXISTS
+-- or drops what it is about to create. A part-applied run is fixed by simply
+-- running the whole file once more.
 
 -- ---------------------------------------------------------------------------
 -- A fourth kind: the goal. Other items become steps toward it through
 -- item_links, so a goal has no columns of its own.
 -- ---------------------------------------------------------------------------
 
-alter table public.items drop constraint items_kind_check;
+alter table public.items drop constraint if exists items_kind_check;
 alter table public.items
   add constraint items_kind_check check (kind in ('task', 'followup', 'note', 'goal'));
 
@@ -17,17 +21,26 @@ alter table public.items
 --   blocks   from_item_id has to be done before to_item_id can start
 -- `suggested` links are proposals from the similarity search, drawn dotted
 -- until accepted. `dismissed` rows stay so the same pair is not proposed again.
+--
+-- The columns and their checks are added separately, so a re-run still fixes
+-- up a constraint even when the column itself is already there.
 -- ---------------------------------------------------------------------------
 
 alter table public.item_links
-  add column kind       text not null default 'related'
-                        check (kind in ('related', 'step', 'blocks')),
-  add column status     text not null default 'confirmed'
-                        check (status in ('confirmed', 'suggested', 'dismissed')),
-  add column position   integer,
-  add column created_at timestamptz not null default now();
+  add column if not exists kind       text not null default 'related',
+  add column if not exists status     text not null default 'confirmed',
+  add column if not exists position   integer,
+  add column if not exists created_at timestamptz not null default now();
 
-create index item_links_to_idx on public.item_links (user_id, to_item_id);
+alter table public.item_links drop constraint if exists item_links_kind_check;
+alter table public.item_links
+  add constraint item_links_kind_check check (kind in ('related', 'step', 'blocks'));
+
+alter table public.item_links drop constraint if exists item_links_status_check;
+alter table public.item_links
+  add constraint item_links_status_check check (status in ('confirmed', 'suggested', 'dismissed'));
+
+create index if not exists item_links_to_idx on public.item_links (user_id, to_item_id);
 
 -- ---------------------------------------------------------------------------
 -- Where each node sits on the map. node_id is "item:<uuid>", "project:<uuid>"
@@ -36,7 +49,7 @@ create index item_links_to_idx on public.item_links (user_id, to_item_id);
 -- never moves.
 -- ---------------------------------------------------------------------------
 
-create table public.map_positions (
+create table if not exists public.map_positions (
   user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
   node_id     text not null,
   x           double precision not null,
@@ -47,6 +60,7 @@ create table public.map_positions (
 );
 
 alter table public.map_positions enable row level security;
+drop policy if exists map_positions_owner on public.map_positions;
 create policy map_positions_owner on public.map_positions for all to authenticated
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 
