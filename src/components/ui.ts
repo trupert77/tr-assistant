@@ -23,7 +23,7 @@ export const ui = {
   btnGhost:
     "inline-flex min-h-12 items-center justify-center gap-2 rounded-full px-4 text-sm font-semibold text-muted transition-colors hover:bg-surface-2 hover:text-foreground",
 
-  chip: "inline-flex min-h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition-opacity hover:opacity-80 active:opacity-70",
+  chip: "inline-flex min-h-11 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition-opacity hover:opacity-80 active:opacity-70",
 } as const;
 
 export const kindStyles = {

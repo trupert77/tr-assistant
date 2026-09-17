@@ -1,6 +1,6 @@
 # Architecture Plan (proposal for review)
 
-Status: **draft, not yet approved.** Nothing in this document is implemented. It answers the seven questions in the "Immediate Development Goal" section of [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
+Status: **approved and built.** All seven phases have shipped; sections 8 to 14 record what each one actually did, which in places differs from the proposal above. It answers the seven questions in the "Immediate Development Goal" section of [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
 
 Decisions that most need Travis's yes or no are marked **DECISION**.
 
@@ -65,7 +65,9 @@ Supabase (Postgres + Auth + RLS)          Anthropic API
 | `/projects`, `/projects/[id]` | Project list and everything linked to a project |
 | `/assistant` | Ask a question, get an answer grounded in stored items |
 | `/items/[id]` | View/edit one task, follow-up, or note |
-| `/people/[id]` | Everything involving a person (small page, post-MVP polish) |
+| `/people`, `/people/[id]` | Everyone the classifier has met, and everything involving one person |
+| `/settings` | Password, theme, and the Claude / ChatGPT switch |
+| `/guide` | How capture and classification work, with example phrasings |
 | `/login` | Magic-link sign-in |
 | `/api/capture` | POST, bearer-token protected, same pipeline as the UI |
 
@@ -101,7 +103,7 @@ Supabase Auth with magic link, single user. `proxy.ts` redirects unauthenticated
 
 ### PWA
 
-`app/manifest.ts`, icons in `public/`, `apple-mobile-web-app-*` meta in the layout, and a minimal service worker for installability. Push notifications are post-MVP and need VAPID keys, a `push_subscriptions` table, and a cron to send them.
+`app/manifest.ts`, icons, and `apple-mobile-web-app-*` meta in the layout. This section originally called for a service worker "for installability"; that turned out to be wrong for this Next version, and Phase 7 dropped it. See section 14. Push notifications are post-MVP and need VAPID keys, a `push_subscriptions` table, and a cron to send them.
 
 ### Later phases, designed for but not built
 
@@ -357,4 +359,22 @@ Written on 2026-09-16:
 - `/assistant` is a GET form so questions are linkable and the back button works. With a key: the answer card, a "Based on" list of the cited items, and "Other matches" from full-text search. Without a key it degrades to plain search. Suggested questions from the brief are one-tap chips.
 - No tool-use loop. At personal scale the whole open set fits in one call, which is simpler, deterministic, and cheaper than a query planner. If the item count grows past the cap, the next step is a planning call or embeddings, not a rewrite.
 
-This completes all nine MVP items in the brief. Still to come: PWA install (Phase 7).
+This completes all nine MVP items in the brief. PWA install and polish followed in Phase 7 (section 14).
+
+## 14. Phase 7 status
+
+Written on 2026-09-17. Much of this phase had already landed alongside Phases 4 to 6; what follows is the whole Phase 7 surface, not only the last commit.
+
+- `src/app/manifest.ts` is the `MetadataRoute.Manifest` convention: standalone display, portrait, warm-charcoal background and theme color matching `--canvas`. It builds to a static `/manifest.webmanifest`.
+- `src/app/icons/[name]/route.tsx` renders every icon from the logo mark with `ImageResponse`, so there are no binary files to keep in sync with the palette: `192.png` and `512.png` rounded for the manifest, `maskable-512.png` full-bleed with the spark inset to the safe zone, and `apple-180.png` for iOS. Cached immutable for a year. `proxy.ts` skips `/icons/`, so they load before sign-in.
+- iOS: `appleWebApp` capable with `statusBarStyle: "default"` and the apple touch icon in the root layout. `viewportFit: "cover"` plus `env(safe-area-inset-*)` in the header and bottom nav keeps content clear of the notch and home indicator. `themeColor` is per color scheme, and `ThemeColorSync` updates it when the Settings toggle forces a theme.
+- Touch targets: buttons and the capture send button are 44px or more, bottom-nav tabs are 52px, and `ui.chip` moved from 36px to 44px. Every `ui.chip` call site is interactive; the read-only kind labels use their own smaller shape and were left alone.
+- Keyboard: a single `:focus-visible` rule in `globals.css` draws an accent ring on anything focused by keyboard without putting one on every tap. `/` from anywhere focuses the capture box, Enter sends, Shift+Enter adds a line.
+
+**No service worker.** The original plan called for "a minimal service worker for installability". That is no longer true of this Next version — the PWA guide states install prompts work without offline support, and Chrome dropped the service-worker requirement. A hand-rolled cache on an app whose whole point is freshly filed items would buy staleness bugs and nothing else.
+
+Instead, `experimental.useOffline` is on in `next.config.ts`. Next holds navigations, prefetches, and Server Actions while the connection is down and replays them when a `HEAD` poll confirms the origin is reachable, rather than throwing. That covers the case that actually matters: a capture typed in a parking garage is not lost. `src/components/offline-banner.tsx` reads the `useOffline` hook and shows a pill explaining the wait, since a held request otherwise looks like a slow one. It is mounted in the root layout so it covers `/login` too.
+
+The flag is experimental, and `next build` prints it under "Experiments (use with caution)". If it misbehaves, removing the flag and the banner is a two-file revert and the app falls back to failing requests the way it did before. Real offline caching, if it is ever wanted, is Serwist rather than a hand-written worker.
+
+Still manual: installing it to the phone home screen and confirming the icon, splash, and standalone chrome look right on the device.

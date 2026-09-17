@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono } from "next/font/google";
+import { OfflineBanner } from "@/components/offline-banner";
 import { ThemeColorSync } from "@/components/theme-color-sync";
 import "./globals.css";
 
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="min-h-full flex flex-col">
         <ThemeColorSync />
+        <OfflineBanner />
         {children}
       </body>
     </html>
