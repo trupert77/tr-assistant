@@ -1,6 +1,6 @@
 # Architecture Plan (proposal for review)
 
-Status: **approved and built.** All seven phases have shipped; sections 8 to 14 record what each one actually did, which in places differs from the proposal above. It answers the seven questions in the "Immediate Development Goal" section of [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
+Status: **approved and built.** The seven MVP phases have shipped, and Phases 8 to 10 (sections 15 to 17) are written; sections 8 to 17 record what each one actually did, which in places differs from the proposal above. It answers the seven questions in the "Immediate Development Goal" section of [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
 
 Decisions that most need Travis's yes or no are marked **DECISION**.
 
@@ -66,10 +66,17 @@ Supabase (Postgres + Auth + RLS)          Anthropic API
 | `/assistant` | Ask a question, get an answer grounded in stored items |
 | `/items/[id]` | View/edit one task, follow-up, or note |
 | `/people`, `/people/[id]` | Everyone the classifier has met, and everything involving one person |
-| `/settings` | Password, theme, and the Claude / ChatGPT switch |
+| `/map` | Everything open as a graph: projects and people as hubs, links, and goal paths |
+| `/ceco` | The CECO portal mirrored read-only: areas, pages, what shipped, and your items about each page |
+| `/focus` | The top three for right now, nothing else |
+| `/someday` | Every open item with no date, oldest first |
+| `/review` | The weekly review: overdue, stale follow-ups, undated tasks, quiet projects |
+| `/settings` | Password, theme, the Claude / ChatGPT switch, notifications per device |
 | `/guide` | How capture and classification work, with example phrasings |
 | `/login` | Magic-link sign-in |
-| `/api/capture` | POST, bearer-token protected, same pipeline as the UI |
+| `/api/capture` | POST, bearer-token protected, same pipeline as the UI; text and/or a photo |
+| `/api/cron/tick` | GET, bearer-token protected: digest, due reminders, stuck captures, search index |
+| `/share` | GET, the manifest's share target; redirects to Today with the capture box filled |
 
 The capture bar lives in the root layout so it is on every screen. Bottom tab bar on phones: Today, Inbox, Projects, Assistant.
 
@@ -378,3 +385,124 @@ Instead, `experimental.useOffline` is on in `next.config.ts`. Next holds navigat
 The flag is experimental, and `next build` prints it under "Experiments (use with caution)". If it misbehaves, removing the flag and the banner is a two-file revert and the app falls back to failing requests the way it did before. Real offline caching, if it is ever wanted, is Serwist rather than a hand-written worker.
 
 Still manual: installing it to the phone home screen and confirming the icon, splash, and standalone chrome look right on the device.
+
+## 15. Phase 8 status
+
+Written on 2026-09-17. Not yet run against the real Supabase project: **apply `supabase/migrations/20260917000000_brain.sql` before deploying this code.** Captures keep working without it (new columns are only written when set), but recurrence, photos, push, and semantic search need it.
+
+The MVP files what you type. Phase 8 is about the other half of "organize my brain": the app reaching out, things not slipping, and less friction getting thoughts in.
+
+**The app reaches out**
+
+- `public/sw.js` is a push-only service worker: `push` and `notificationclick`, no `fetch` handler and no cache, so section 14's reasoning for having no offline worker still holds. `next.config.ts` serves it `no-store`. Settings has a per-device toggle (`settings/push-toggle.tsx`) that registers the worker, subscribes with the VAPID public key, and stores the subscription in `push_subscriptions`. iOS only allows push from the installed app, so Safari in a tab gets install steps instead of a dead button.
+- `src/lib/push/` holds `sendPush` (web-push; a 404 or 410 from the push service deletes the subscription), `buildDigest` (pure, tested), and `runTick`. `GET /api/cron/tick` runs it behind `CRON_SECRET` with the service-role client.
+- A tick: (1) the morning digest, once per local day after `DIGEST_HOUR`, locked by the unique key on `notification_log (user_id, kind, local_date)`; (2) a push for items whose stated time has arrived, once per due time via `items.reminded_at` (date-only items sit at 09:00 by convention and are left to the digest); (3) captures stuck in `pending` for two minutes get classified, which is the fallback section 2 promised if `after()` proved flaky; (4) the search index is topped up.
+- `vercel.json` schedules the tick at 11:00 and 12:00 UTC so 7am Detroit is covered in both EDT and EST; the lock makes the second one a no-op. Vercel's Hobby plan only allows daily crons, which is enough for the digest but not for timed reminders. For those, call the same URL every ten minutes from Supabase:
+
+```sql
+-- Run once in the Supabase SQL editor. Needs the pg_cron and pg_net extensions.
+select cron.schedule(
+  'tr-assistant-tick',
+  '*/10 * * * *',
+  $$ select net.http_get(
+       url := 'https://tr-assistant-fawn.vercel.app/api/cron/tick',
+       headers := jsonb_build_object('Authorization', 'Bearer <CRON_SECRET>')
+     ) $$
+);
+```
+
+- Follow-ups age: `ItemRow` shows "Nd waiting" from day two and turns red at five (`STALE_WAITING_DAYS`), unless the follow-up is scheduled for a future date. The digest names the stalest one. On a follow-up's page, "Draft a check-in message" calls the new `AiProvider.draftNudge` and offers the share sheet or the clipboard. Nothing is sent from the app.
+
+**Things stop slipping**
+
+- `/review` is one pass over overdue items, waiting follow-ups, tasks undated for 14 days, and active projects with nothing open, each row with Tomorrow / Next week / Someday / Archive. Finishing stamps `last_review_at` in auth user metadata (same trick as `ai_provider`); Today's Review chip turns orange after seven days, and Friday's digest mentions it.
+- `/someday` lists every open undated item, oldest first. Today drops undated captures after 48 hours, so before this they were only reachable by search.
+- `/focus` shows three items: overdue and due today ranked by priority then time, topped up with undated high-priority tasks.
+- Recurrence: `items.recurrence` (daily, weekdays, weekly, biweekly, monthly, quarterly, yearly) and `items.recurred_from`. The classifier fills it from phrases like "every Monday"; the item form has a Repeats select. `completeItem` in `src/lib/items/mutations.ts` spawns the next occurrence with people links copied. `nextDueAt` steps from the old due date (so Mondays stay Mondays), keeps stepping until the result is after today (so a long-overdue item does not return overdue), and holds the wall-clock time across DST. A unique index on `recurred_from` plus an un-archive path makes complete, undo, complete idempotent.
+- Undo: completing from a row and archiving show a toast with Undo (`components/toast.tsx`, mounted in the app layout). All state changes now go through `mutations.ts`, which the item buttons, the review, and the assistant share.
+
+**Less friction getting things in**
+
+- Multi-item captures: the classifier now returns `{ items: [...] }`. The first goes through `promoteInboxItem` as before; the rest through `addItemFromInbox`, all sharing `inbox_item_id`. The inbox row goes to review if any item needs it and its card lists the extras. `parseStoredResult` still reads rows filed under the old single-object shape.
+- Voice: a mic button using the browser's SpeechRecognition where it exists (feature-detected, so it simply does not render elsewhere). Dictated captures are stored with `source = 'voice'`.
+- Photos: the capture bar downsizes to 1600px JPEG in the browser, the Server Action uploads to the private `captures` storage bucket under `<user id>/`, and `classifyInboxItem` hands the image to the model with the text. Both providers take it as a base64 image block. The item page shows it through a one-hour signed URL. `serverActions.bodySizeLimit` is 4 MB.
+- Share: the manifest declares a GET `share_target` at `/share`, which redirects to `/?capture=...` so the text lands in the capture box for a look before sending. That covers Android and desktop Chrome. iOS has no share target, so `POST /api/capture` now accepts a photo (JSON base64 or multipart) for a share-sheet Shortcut.
+- The capture API now files what it captures. Before this it only stored the row, because `promoteInboxItem` relied on `auth.uid()` for `user_id`, which is null under the service role. Item, people, and link inserts now write `user_id` from the inbox row, and the classifier's context queries filter by it.
+
+**What you captured is more useful**
+
+- Semantic search: `item_embeddings` (pgvector, 1536 dims, HNSW, cosine) in its own table so `select *` on items stays light. `items.content_hash` is a generated md5 of title, body, and source text; `items_to_embed()` returns rows whose hash differs from the stored one, so `indexPendingItems` is safe to call after every capture and edit and in every tick. `match_items()` is security invoker, so RLS applies. Embeddings come from OpenAI (`text-embedding-3-small`) whichever provider files captures, because Anthropic has no embeddings endpoint; without `OPENAI_API_KEY` it is all a no-op. `hybridSearch` is keyword hits first, then semantic-only hits.
+- The assistant converses and acts. `/assistant` is now a client conversation (`assistant-chat.tsx`) over two Server Actions. Each turn retrieves fresh and sends up to six earlier question/answer pairs as plain turns, with the current item list only on the last message. `?q=` links still work and ask themselves on arrival. The answer schema gained `actions` (complete, reopen, reschedule, set_priority, archive, create). Actions are proposals: the UI lists them and nothing runs until Apply, which re-validates each one server-side and only accepts ids the model was shown. Still no tool-use loop, for the reasons in section 13.
+- Calendar: `CALENDAR_ICS_URL` points at a secret iCal feed (Google) or a published calendar (Microsoft 365). `src/lib/calendar` fetches it with a ten-minute in-memory cache and expands recurring events with `node-ical`, which also handles Windows timezone names from Outlook. Read-only, no OAuth. Today shows the day's events, the digest lists the first three, and the assistant gets today and tomorrow so "what should I do next, I have 20 minutes" can plan around meetings.
+
+**New dependencies:** `web-push` (VAPID signing and payload encryption) and `node-ical` (RRULE expansion and timezone mapping are not worth hand-rolling). `node-ical` is in `serverExternalPackages`.
+
+**New environment variables:** `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `CRON_SECRET`, `DIGEST_HOUR` (default 7), `CALENDAR_ICS_URL`, `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`). All optional; each feature stays off, and says so in Settings and the Guide, until its variables are set. Push also needs `SUPABASE_SERVICE_ROLE_KEY`.
+
+Still manual: applying the migration, setting the variables in Vercel, and everything that needs a signed-in phone: the push permission flow on iOS, dictation inside the installed PWA (Safari's support there has been uneven), and a photo capture end to end.
+
+## 16. Phase 9 status
+
+Written on 2026-09-17. **Apply `supabase/migrations/20260918000000_map.sql` after the Phase 8 migration.** Without it the map still draws (projects and people come from existing tables) but links, goals, and saved positions do not work.
+
+The brief: "a mind map, like a whiteboard or Obsidian graph. Things pertain to each other relationally, but they could also be steps towards a goal." Travis chose, on 2026-09-17: a hybrid layout (automatic, but what you drag stays put), items plus projects plus people as nodes, a new goal kind with ordered steps, and links the AI suggests and he confirms.
+
+**Data**
+
+- `items.kind` gains `goal`. A goal has no columns of its own; other items become its steps through links. The classifier files "Goal: get Aspen off the old SQL server" as one, and never invents its steps.
+- `item_links` has existed, empty, since the first migration. It now has `kind` (`related`, `step`, `blocks`), `status` (`confirmed`, `suggested`, `dismissed`), and `position`. For a step, `from` is the step and `to` the goal; for blocks, `from` comes first. A pair of items has at most one link: every write in `src/lib/links` checks the reverse direction first.
+- `map_positions (user_id, node_id, x, y, pinned)`. Node ids are `item:<uuid>`, `project:<uuid>`, `person:<uuid>`. Every laid-out node is saved, not only pinned ones, so the map looks the same on the next visit.
+- `related_items(source_id)` returns an item's nearest neighbours from its stored embedding. Security invoker.
+
+**The map (`/map`, fifth tab)**
+
+- `src/lib/map/graph.ts` builds the graph. `buildGraph` is pure and tested. Project and person edges are implicit from `items.project_id` and `item_people`, which is why clusters form with zero effort. A goal's steps are drawn as a path, step to next step and the last into the goal, because the order is the point. A step reaches its project through its goal; drawing both lines tied the path in a knot around the project hub.
+- `src/lib/map/layout.ts` places it with `d3-force`, run to completion synchronously. The result is a still picture: nothing drifts while you read it, and there is no per-frame React work. Two kinds of placement run together. Relationships are forces. A goal's steps are a rule: they stack in a column above the goal, first step on top, re-imposed after every tick while everything else arranges around it. (Two force-only attempts were tried first and discarded: plain links zig-zagged, and skip-one "stiffener" links curled the path into a star. Column members also need a reduced collision size, or they shove their own goal away on every tick and follow it off the canvas.)
+- Stability: a node with a saved position keeps it exactly and is fixed during layout, so new nodes find room around what is already there. A column that gains a step is the one exception; its unpinned steps shift up. Tidy re-lays-out everything unpinned. Pinned nodes never move. All of this is covered by tests, including determinism.
+- `map-canvas.tsx` is SVG with hand-rolled pointer handling: drag the background to pan, pinch or wheel to zoom, drag a node to pin it, tap to select. Selecting dims everything but the node's neighbours and opens `node-panel.tsx`: Open, Link to, Add a step (goals), Blocked by, Unpin, the node's connections with remove buttons, and its suggestions with Link / No. Linking from the map is two taps (pick the tool, tap the other item), because dragging a line between small targets does not work on a phone. Filters by kind, a full-screen toggle, and `?focus=item:<id>` so an item page can say "See on the map".
+- Labels: all shown while the map has 45 nodes or fewer; past that, zoomed-out views keep only hubs, goals, and the selection, like Obsidian. Text holds its on-screen size down to 60% zoom. Link distances and collision sizes are tuned for the labels, not the dots.
+
+**Goals**
+
+- A goal's page has a Steps section: ordered checklist with a progress bar, reorder, remove (the task stays), add by typing, and "Break it down for me", which calls the new `AiProvider.planGoal` and shows proposals as a checklist to keep or drop. Nothing is saved until Add. Steps are ordinary tasks and inherit the goal's workspace and project.
+- `loadGoalProgress` finds each open goal's next actionable step: the first unfinished one with no open blocker (a blocker outside the goal still counts). Today shows these under "Next on your goals", and Focus tops up from them. Steps rarely have dates, so without this a goal would only move when someone went looking for it.
+- Every item page has a Connections section: goals it is a step toward, what blocks it, what it blocks, related items, suggestions, and a search box (keyword, meaning, and plain title match) to connect it to anything.
+
+**Suggestions**
+
+- No LLM call. After a capture is filed and embedded, `suggestLinksFor` asks `related_items` for its nearest neighbours (cosine similarity 0.5 or more, three at most) and stores them as `suggested` links. The sparkles button on the map does the same for the forty most recent items. Suggestions draw as dotted orange lines and pull only weakly in the layout. Dismissed pairs are kept so they are not proposed again. Needs the Phase 8 embeddings, so without `OPENAI_API_KEY` the button and filter do not render.
+
+**New dependency:** `d3-force`. Force layout, collision, and Barnes-Hut repulsion are not worth hand-rolling, and it is 30 kB with no DOM dependency.
+
+Verified by rendering the canvas with sample data in headless Chrome at desktop and phone widths while tuning the layout. Still unverified: real data, touch gestures on a real phone (pinch, drag to pin), and the signed-in flows (linking, step reorder, plan a goal).
+
+## 17. Phase 10 status: the CECO connection
+
+Written on 2026-09-17. It spans two repos. **In CECO** (`ceco-app-1`): deploy the new endpoint and set `ASSISTANT_API_TOKEN`. **Here**: apply `supabase/migrations/20260919000000_ceco.sql` and set `CECO_API_URL` and `CECO_API_TOKEN` (the same value as CECO's token). Until then everything CECO-related stays hidden and nothing else changes.
+
+The brief says CECO is a separate system the assistant talks to through an API, never part of it. Travis's ask on 2026-09-17: "I just want a scope of the whole ceco app", read-only, through a small token-protected API in CECO. So this phase mirrors what the portal *is* (its areas, pages, and what shipped), not what is *in* it (no tickets, employees, customers, or requests).
+
+**CECO side** (its own `CHANGELOG.md` has the detail)
+
+- `GET /api/assistant/scope`, guarded by `Authorization: Bearer <ASSISTANT_API_TOKEN>`, returns `{ schema: 1, app, areas, pages, updates }`. It is assembled only from CECO's static registries (`ROUTES`, `CHANGELOG_AREAS`, `CHANGELOG_PAGES`, `CHANGELOG`) and **never touches its database**. Free text is scrubbed of email addresses and phone numbers on the way out. At the time of writing that is 68 pages in 8 areas and 32 updates, about 49 kB; it grows as CECO does.
+- The token is separate from CECO's `CRON_SECRET` on purpose (that one can trigger syncs and emails), fails closed when unset or short, and the proxy opens exactly one path. Ten tests in CECO's own style cover all of that, including "zero database or session calls".
+- Anything that would need a query (IT tickets, feature requests, initiatives) is deliberately out of scope. It would be a new endpoint in CECO with its own review, not a widening of this one.
+
+**This side**
+
+- **The host is `https://www.ceco.info`, not the apex.** `ceco.info` answers 307 to `www`, and `fetch` strips `Authorization` across origins, so following that redirect would drop the token and look exactly like a wrong one. Redirects are therefore never followed: a redirect that keeps the path reports the host to use, and one that changes it means the endpoint is not public there yet. Both messages were checked against production.
+- `src/lib/ceco` fetches the scope (zod-validated, lenient about new fields, strict about a newer `schema`), and keeps the last good copy in `external_scopes`. Every reader uses the copy, never the live endpoint, so the map, the classifier, and the assistant keep working when CECO is down or mid-deploy. The cron tick refreshes it when it is more than six hours old; `/ceco` has Sync now. Fetch errors are translated into what to fix ("CECO redirected to its login page: deploy the endpoint there first", "the tokens do not match").
+- `item_ceco_pages (item_id, path)` records which pages an item is about. The path is CECO's own and is the stable id. Writes only accept paths present in the synced scope, so neither the model nor a stale form can invent one.
+- **Classifier.** When a scope is synced, its page list (path, title, area) rides in the user message, and the classification schema has `ceco_pages`. The prompt draws the line: a bug in, change to, or idea for the portal is about a page; work that merely happens at the company is not. `parseStoredResult` still reads rows filed before the field existed.
+- **`/ceco`** is the scope as a list: version, recently shipped, then every area with its pages, each showing how many of your open items are about it and when it last shipped. A page's detail view lists those items, its What's New history, its permission key, and a link to open it in CECO. Reached from a CECO chip on Today.
+- **Map.** Three new node types: the portal hub, areas (with CECO's own emoji), and pages. By default only pages that one of your items is about are drawn, with their area and the hub, so the portal appears where it matters. `/map?ceco=all` draws the whole app, a radial of 8 areas and 67 pages. "Link to" from an item followed by a tap on a page node records that the item is about that page. The hub is labelled "CECO portal", not the scope's "CECO App", because Travis has a project by that name. A CECO filter chip hides all of it.
+- **Assistant.** Item lines carry their CECO pages, and the twelve newest updates ride along as "recently shipped", so "what did I ship to trucking this month" and "what is still open on the job board" are answerable.
+- The item page has a CECO pages section to correct what the classifier picked.
+
+**Why not the alternatives.** Reading CECO's database directly would have meant putting its service-role key, which bypasses row-level security including rental-application PII, inside a personal app. Having CECO push into `/api/capture` would be fire-and-forget text with no structure. A pull from a narrow, versioned, read-only endpoint keeps the decision about what leaves CECO inside CECO.
+
+Verified: CECO's 10 new tests and its existing 88 proxy tests pass, `tsc` and `eslint` clean on both sides; here 56 tests pass, and the map was rendered in headless Chrome against CECO's real scope in both modes.
+
+Also verified live, against a running CECO and against production. Locally: no token gives 401 and the right token gives 200, and `fetchCecoScope` parsed the real 68-page payload with no email address anywhere in it. Against `www.ceco.info`: the endpoint is deployed and answers 503 ("Assistant API is not configured") because Vercel has no `ASSISTANT_API_TOKEN` yet, and the apex reports the host to use. The temporary tests that did this needed a running server, so they were removed rather than left to fail in CI.
+
+Still unverified: a sync through the app itself (needs the migration run and the token in Vercel), and the classifier's page picks on real captures.
